@@ -25,11 +25,167 @@ export function StarSky3D({ stars, onStarClick }: StarSky3DProps) {
     width: typeof window !== 'undefined' ? window.innerWidth : 1920,
     height: typeof window !== 'undefined' ? window.innerHeight : 1080
   });
-  const rotationRef = useRef({ x: 0, y: 0 });
-  const zoomRef = useRef(15000); // Start at maximum zoom out
+  const rotationRef = useRef({ x: Math.PI, y: 0 }); // Start right-side up
+  const zoomRef = useRef(1000); // Start at a good middle view
   const [isDragging, setIsDragging] = useState(false);
   const [lastMouse, setLastMouse] = useState({ x: 0, y: 0 });
   const stars3D = useRef<Star3D[]>([]);
+
+  // Draw 3D grid planes
+  const drawGridPlanes = (ctx: CanvasRenderingContext2D, width: number, height: number) => {
+    const rotation = rotationRef.current;
+    const zoom = zoomRef.current;
+
+    // Multiple grid levels with different spacings - extended ranges
+    const gridLevels = [
+      { spacing: 10, minZoom: 0, maxZoom: 100 },
+      { spacing: 25, minZoom: 0, maxZoom: 200 },
+      { spacing: 50, minZoom: 0, maxZoom: 400 },
+      { spacing: 100, minZoom: 300, maxZoom: 800 },
+      { spacing: 200, minZoom: 700, maxZoom: 1500 },
+      { spacing: 500, minZoom: 1400, maxZoom: 3000 },
+      { spacing: 1000, minZoom: 2800, maxZoom: 6000 },
+      { spacing: 2000, minZoom: 5500, maxZoom: 12000 },
+      { spacing: 5000, minZoom: 11000, maxZoom: 999999 },
+    ];
+
+    // Helper to project 3D point to 2D
+    const project = (x3d: number, y3d: number, z3d: number) => {
+      const cosY = Math.cos(rotation.y);
+      const sinY = Math.sin(rotation.y);
+      const cosX = Math.cos(rotation.x);
+      const sinX = Math.sin(rotation.x);
+
+      let x = x3d * cosY + z3d * sinY;
+      let z = -x3d * sinY + z3d * cosY;
+      let y = y3d;
+
+      let y2 = y * cosX - z * sinX;
+      let z2 = y * sinX + z * cosX;
+      z2 += zoom;
+
+      const scale = 500 / (500 + z2);
+      const screenX = width / 2 + x * scale;
+      const screenY = height / 2 + y2 * scale;
+
+      return { screenX, screenY, scale, z2 };
+    };
+
+    // Draw a line with clipping at camera plane
+    const drawLine = (x1: number, y1: number, z1: number, x2: number, y2: number, z2: number) => {
+      const p1 = project(x1, y1, z1);
+      const p2 = project(x2, y2, z2);
+
+      // Near plane - clip anything too close to avoid extreme projections
+      const nearZ = -400;
+
+      // Both points behind camera - don't draw
+      if (p1.z2 < nearZ && p2.z2 < nearZ) {
+        return;
+      }
+
+      // Both points in front - draw normally
+      if (p1.z2 >= nearZ && p2.z2 >= nearZ) {
+        ctx.beginPath();
+        ctx.moveTo(p1.screenX, p1.screenY);
+        ctx.lineTo(p2.screenX, p2.screenY);
+        ctx.stroke();
+        return;
+      }
+
+      // One point behind, one in front - clip to near plane
+      let t = 0;
+      if (p1.z2 < nearZ) {
+        t = (nearZ - p1.z2) / (p2.z2 - p1.z2);
+        const clippedX = x1 + t * (x2 - x1);
+        const clippedY = y1 + t * (y2 - y1);
+        const clippedZ = z1 + t * (z2 - z1);
+        const pClipped = project(clippedX, clippedY, clippedZ);
+
+        ctx.beginPath();
+        ctx.moveTo(pClipped.screenX, pClipped.screenY);
+        ctx.lineTo(p2.screenX, p2.screenY);
+        ctx.stroke();
+      } else {
+        t = (nearZ - p1.z2) / (p2.z2 - p1.z2);
+        const clippedX = x1 + t * (x2 - x1);
+        const clippedY = y1 + t * (y2 - y1);
+        const clippedZ = z1 + t * (z2 - z1);
+        const pClipped = project(clippedX, clippedY, clippedZ);
+
+        ctx.beginPath();
+        ctx.moveTo(p1.screenX, p1.screenY);
+        ctx.lineTo(pClipped.screenX, pClipped.screenY);
+        ctx.stroke();
+      }
+    };
+
+    // Draw a grid plane with given spacing and opacity
+    const drawGridLevel = (spacing: number, opacity: number) => {
+      // Calculate grid range - much larger to appear infinite
+      const maxCoord = 50000;
+      const numLines = Math.floor(maxCoord / spacing);
+
+      // Draw XY plane (z=0) - blue
+      ctx.strokeStyle = `rgba(59, 130, 246, ${0.2 * opacity})`;
+      ctx.lineWidth = 1;
+      for (let i = -numLines; i <= numLines; i++) {
+        const offset = i * spacing;
+
+        // Lines parallel to X axis
+        drawLine(-maxCoord, offset, 0, maxCoord, offset, 0);
+
+        // Lines parallel to Y axis
+        drawLine(offset, -maxCoord, 0, offset, maxCoord, 0);
+      }
+
+      // Draw XZ plane (y=0) - green
+      ctx.strokeStyle = `rgba(34, 197, 94, ${0.2 * opacity})`;
+      for (let i = -numLines; i <= numLines; i++) {
+        const offset = i * spacing;
+
+        // Lines parallel to X axis
+        drawLine(-maxCoord, 0, offset, maxCoord, 0, offset);
+
+        // Lines parallel to Z axis
+        drawLine(offset, 0, -maxCoord, offset, 0, maxCoord);
+      }
+
+      // Draw YZ plane (x=0) - red
+      ctx.strokeStyle = `rgba(239, 68, 68, ${0.2 * opacity})`;
+      for (let i = -numLines; i <= numLines; i++) {
+        const offset = i * spacing;
+
+        // Lines parallel to Y axis
+        drawLine(0, -maxCoord, offset, 0, maxCoord, offset);
+
+        // Lines parallel to Z axis
+        drawLine(0, offset, -maxCoord, 0, offset, maxCoord);
+      }
+    };
+
+    // Draw all active grid levels with fade transitions
+    gridLevels.forEach(level => {
+      let opacity = 0;
+
+      // Fade in
+      if (zoom >= level.minZoom && zoom <= level.minZoom + 100) {
+        opacity = (zoom - level.minZoom) / 100;
+      }
+      // Fully visible
+      else if (zoom > level.minZoom + 100 && zoom < level.maxZoom - 100) {
+        opacity = 1;
+      }
+      // Fade out
+      else if (zoom >= level.maxZoom - 100 && zoom <= level.maxZoom) {
+        opacity = (level.maxZoom - zoom) / 100;
+      }
+
+      if (opacity > 0.01) {
+        drawGridLevel(level.spacing, opacity);
+      }
+    });
+  };
 
   // Initialize 3D positions
   useEffect(() => {
@@ -81,6 +237,9 @@ export function StarSky3D({ stars, onStarClick }: StarSky3DProps) {
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+      // Draw grid planes
+      drawGridPlanes(ctx, canvas.width, canvas.height);
+
       // Project and sort stars by depth
       const rotation = rotationRef.current;
       const zoom = zoomRef.current;
@@ -102,7 +261,7 @@ export function StarSky3D({ stars, onStarClick }: StarSky3DProps) {
         let z2 = y * sinX + z * cosX;
 
         // Apply zoom (distance from viewer)
-        z2 -= zoom;
+        z2 += zoom;
 
         // Perspective projection
         const scale = 500 / (500 + z2);
@@ -123,7 +282,7 @@ export function StarSky3D({ stars, onStarClick }: StarSky3DProps) {
 
       // Draw stars
       projectedStars.forEach((star) => {
-        if (star.depth < -500 || star.scale < 0 || star.scale < 0.3) return; // Behind camera or too far
+        if (star.depth < -500 || star.scale < 0 || star.scale < 0.01) return; // Behind camera or too far
 
         const x = star.screenX!;
         const y = star.screenY!;
@@ -236,8 +395,9 @@ export function StarSky3D({ stars, onStarClick }: StarSky3DProps) {
   const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
     e.preventDefault();
     const zoom = zoomRef.current;
-    // Zoom in/out based on wheel delta - much faster increment
-    zoomRef.current = Math.max(50, Math.min(15000, zoom + e.deltaY * 10));
+    const newZoom = Math.max(0, Math.min(10000, zoom + e.deltaY * 5));
+    console.log('Wheel event:', { oldZoom: zoom, deltaY: e.deltaY, newZoom });
+    zoomRef.current = newZoom;
   };
 
   return (
