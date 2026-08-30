@@ -4,11 +4,12 @@ import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase/client';
 import { generateStarPosition, getMoodColor } from '@/lib/utils';
 import type { Star } from '@/types';
-import { StarSky } from '@/components/sky/StarSky';
+import { StarSky3D } from '@/components/sky/StarSky3D';
 import { Modal } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { LoadingPage } from '@/components/ui/Loading';
 import { useRouter } from 'next/navigation';
+import { motion } from 'framer-motion';
 
 export default function SkyPage() {
   const [stars, setStars] = useState<Star[]>([]);
@@ -77,10 +78,18 @@ export default function SkyPage() {
   return (
     <>
       {/* Navigation */}
-      <div className="fixed top-4 left-4 right-4 z-10 flex justify-between items-center">
-        <div>
-          <h1 className="text-2xl font-serif text-glow">Space of Sonder</h1>
-          <p className="text-sm text-gray-400">{stars.length} stars in the sky</p>
+      <motion.div
+        initial={{ opacity: 0, y: -20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="fixed top-6 left-6 right-6 z-10 flex justify-between items-center"
+      >
+        <div className="bg-black/40 backdrop-blur-md border border-white/20 rounded-lg px-6 py-3">
+          <h1 className="text-2xl font-serif text-glow bg-gradient-to-r from-white to-gray-400 bg-clip-text text-transparent">
+            Space of Sonder
+          </h1>
+          <p className="text-sm text-gray-400 mt-1">
+            {stars.length} souls wandering the cosmos
+          </p>
         </div>
         <div className="flex gap-2">
           <Button variant="ghost" onClick={() => router.push('/diary')}>
@@ -90,10 +99,10 @@ export default function SkyPage() {
             Messages
           </Button>
         </div>
-      </div>
+      </motion.div>
 
-      {/* Star Sky */}
-      <StarSky stars={stars} onStarClick={handleStarClick} />
+      {/* 3D Star Sky */}
+      <StarSky3D stars={stars} onStarClick={handleStarClick} />
 
       {/* Star Detail Modal */}
       <Modal
@@ -102,19 +111,27 @@ export default function SkyPage() {
         title={selectedStar?.username || 'Anonymous Star'}
       >
         {selectedStar && (
-          <div className="space-y-4">
-            <div
-              className="w-16 h-16 rounded-full mx-auto star-glow"
-              style={{
-                backgroundColor: selectedStar.color,
-                filter: `drop-shadow(0 0 12px ${selectedStar.color})`,
-              }}
-            />
+          <div className="space-y-6">
+            <div className="flex items-center justify-center">
+              <motion.div
+                initial={{ scale: 0 }}
+                animate={{ scale: 1 }}
+                className="w-20 h-20 rounded-full relative"
+                style={{
+                  backgroundColor: selectedStar.color,
+                  boxShadow: `0 0 40px ${selectedStar.color}, 0 0 80px ${selectedStar.color}40`,
+                }}
+              >
+                <div className="absolute inset-0 rounded-full animate-ping opacity-20" style={{ backgroundColor: selectedStar.color }} />
+              </motion.div>
+            </div>
 
             <div className="text-center space-y-2">
-              <p className="text-sm text-gray-400 capitalize">
-                Feeling {selectedStar.mood}
-              </p>
+              <div className="inline-block px-4 py-1.5 bg-white/5 border border-white/10 rounded-full">
+                <p className="text-sm text-gray-400 capitalize">
+                  Feeling <span className="text-white font-medium">{selectedStar.mood}</span>
+                </p>
+              </div>
 
               {selectedStar.region && (
                 <p className="text-xs text-gray-500">
@@ -124,27 +141,34 @@ export default function SkyPage() {
             </div>
 
             {selectedStar.quote && (
-              <div className="border-l-2 border-white/20 pl-4 py-2">
-                <p className="italic text-gray-300">&ldquo;{selectedStar.quote}&rdquo;</p>
+              <div className="bg-gradient-to-br from-white/5 to-transparent border border-white/10 rounded-lg p-4">
+                <p className="text-sm text-gray-400 mb-2">Current thought</p>
+                <p className="italic text-gray-200 leading-relaxed">&ldquo;{selectedStar.quote}&rdquo;</p>
               </div>
             )}
 
             {selectedStar.bio && (
               <div>
-                <p className="text-sm text-gray-400 mb-2">About</p>
-                <p className="text-gray-300">{selectedStar.bio}</p>
+                <p className="text-sm text-gray-400 mb-2">About this soul</p>
+                <p className="text-gray-300 leading-relaxed">{selectedStar.bio}</p>
               </div>
             )}
 
-            <div className="pt-4 border-t border-white/10">
+            <div className="pt-4 border-t border-white/10 flex gap-2">
               <Button
                 variant="secondary"
-                className="w-full"
+                className="flex-1"
                 onClick={() => {
                   router.push(`/messages?to=${selectedStar.id}`);
                 }}
               >
                 Send Message
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => setSelectedStar(null)}
+              >
+                Close
               </Button>
             </div>
           </div>
@@ -153,3 +177,4 @@ export default function SkyPage() {
     </>
   );
 }
+

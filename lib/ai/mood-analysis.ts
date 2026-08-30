@@ -1,6 +1,4 @@
-import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
-
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY!);
+import { GoogleGenAI } from '@google/genai';
 
 export type MoodAnalysis = {
   mood: 'happy' | 'sad' | 'struggling' | 'hopeful';
@@ -8,38 +6,14 @@ export type MoodAnalysis = {
   color_hex: string;
 };
 
-const moodSchema = {
-  type: SchemaType.OBJECT,
-  properties: {
-    mood: {
-      type: SchemaType.STRING,
-      enum: ['happy', 'sad', 'struggling', 'hopeful'],
-      description: 'The overall emotional state detected from the diary entries',
-    },
-    confidence: {
-      type: SchemaType.NUMBER,
-      description: 'Confidence score between 0.0 and 1.0',
-    },
-    color_hex: {
-      type: SchemaType.STRING,
-      description: 'Hex color code representing the mood',
-    },
-  },
-  required: ['mood', 'confidence', 'color_hex'],
-};
-
 /**
- * Analyze mood from diary entries using Gemini Flash
+ * Analyze mood from diary entries using Google GenAI
+ * This should only be called server-side
  */
-export async function analyzeMood(entries: string[]): Promise<MoodAnalysis> {
-  const model = genAI.getGenerativeModel({
-    model: 'gemini-2.0-flash-lite',
-    generationConfig: {
-      responseMimeType: 'application/json',
-      responseSchema: moodSchema,
-    },
+export async function analyzeMood(entries: string[], apiKey: string): Promise<MoodAnalysis> {
+  const ai = new GoogleGenAI({
+    apiKey,
   });
-
   const prompt = `
 You are analyzing diary entries to determine the writer's current emotional state.
 
@@ -58,18 +32,51 @@ Entries:
 ${entries.map((entry, i) => `\n--- Entry ${i + 1} ---\n${entry}`).join('\n')}
 
 Analyze the emotional tone, themes, and overall trajectory of these entries.
+
+Respond with ONLY a JSON object in this exact format:
+{"mood": "happy|sad|struggling|hopeful", "confidence": 0.0, "color_hex": "#000000"}
   `.trim();
 
-  const result = await model.generateContent(prompt);
-  const response = result.response.text();
+  try {
+    const interaction = await ai.interactions.create({
+      model: 'models/gemini-3.7-flash',
+      input: prompt,
+    });
 
-  return JSON.parse(response) as MoodAnalysis;
+    const response = interaction.steps?.at(-1)?.output;
+
+    if (!response) {
+      throw new Error('No response from AI');
+    }
+
+    // Parse JSON from response
+    const jsonMatch = response.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      throw new Error('Could not parse JSON from response');
+    }
+
+    const result = JSON.parse(jsonMatch[0]) as MoodAnalysis;
+
+    // Validate the result
+    if (!['happy', 'sad', 'struggling', 'hopeful'].includes(result.mood)) {
+      throw new Error('Invalid mood returned');
+    }
+
+    return result;
+  } catch (error) {
+    console.error('Error analyzing mood:', error);
+    // Return a default mood if analysis fails
+    return {
+      mood: 'hopeful',
+      confidence: 0.5,
+      color_hex: '#48c9b0',
+    };
+  }
 }
 
 /**
- * Get the latest model ID from Google AI
- * Flash Lite versions update frequently - check Google AI Studio for current ID
+ * Get the current model ID
  */
 export function getModelId(): string {
-  return 'gemini-2.0-flash-lite';
+  return 'models/gemini-3.7-flash';
 }

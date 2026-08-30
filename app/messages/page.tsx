@@ -50,32 +50,39 @@ export default function MessagesPage() {
 
   const loadConversations = async (userId: string) => {
     try {
-      // Get unique conversations
+      // Get unique conversations - just get IDs first
       const { data, error } = await supabase
         .from('messages')
-        .select('sender_id, recipient_id, profiles!messages_sender_id_fkey(username), profiles!messages_recipient_id_fkey(username)')
+        .select('sender_id, recipient_id')
         .or(`sender_id.eq.${userId},recipient_id.eq.${userId}`)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
 
       // Extract unique conversation partners
-      const partners = new Map();
+      const partnerIds = new Set<string>();
       data?.forEach((msg: any) => {
         const partnerId = msg.sender_id === userId ? msg.recipient_id : msg.sender_id;
-        if (!partners.has(partnerId)) {
-          partners.set(partnerId, {
-            id: partnerId,
-            username: msg.sender_id === userId
-              ? msg.profiles?.username || 'Anonymous'
-              : msg.profiles?.username || 'Anonymous',
-          });
-        }
+        partnerIds.add(partnerId);
       });
 
-      setConversations(Array.from(partners.values()));
-    } catch (error) {
+      // Fetch profile info for each partner
+      if (partnerIds.size > 0) {
+        const { data: profiles, error: profileError } = await supabase
+          .from('profiles')
+          .select('id, username')
+          .in('id', Array.from(partnerIds));
+
+        if (profileError) throw profileError;
+
+        setConversations(profiles?.map(p => ({
+          id: p.id,
+          username: p.username || 'Anonymous'
+        })) || []);
+      }
+    } catch (error: any) {
       console.error('Error loading conversations:', error);
+      console.error('Error details:', error?.message, error?.code, error?.details);
     } finally {
       setLoading(false);
     }
