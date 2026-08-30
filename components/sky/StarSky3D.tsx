@@ -21,11 +21,14 @@ interface Star3D extends Star {
 export function StarSky3D({ stars, onStarClick }: StarSky3DProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [hoveredStar, setHoveredStar] = useState<Star | null>(null);
-  const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
-  const [camera, setCamera] = useState({ x: 0, y: 0, z: -500, rotX: 0, rotY: 0 });
+  const [dimensions, setDimensions] = useState({
+    width: typeof window !== 'undefined' ? window.innerWidth : 1920,
+    height: typeof window !== 'undefined' ? window.innerHeight : 1080
+  });
+  const rotationRef = useRef({ x: 0, y: 0 });
+  const zoomRef = useRef(15000); // Start at maximum zoom out
   const [isDragging, setIsDragging] = useState(false);
   const [lastMouse, setLastMouse] = useState({ x: 0, y: 0 });
-  const keysPressed = useRef<Set<string>>(new Set());
   const stars3D = useRef<Star3D[]>([]);
 
   // Initialize 3D positions
@@ -59,25 +62,6 @@ export function StarSky3D({ stars, onStarClick }: StarSky3DProps) {
     return () => window.removeEventListener('resize', updateDimensions);
   }, []);
 
-  // Keyboard controls
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      keysPressed.current.add(e.key.toLowerCase());
-    };
-
-    const handleKeyUp = (e: KeyboardEvent) => {
-      keysPressed.current.delete(e.key.toLowerCase());
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('keyup', handleKeyUp);
-
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('keyup', handleKeyUp);
-    };
-  }, []);
-
   // Animation loop
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -95,59 +79,42 @@ export function StarSky3D({ stars, onStarClick }: StarSky3DProps) {
     const animate = () => {
       time += 0.01;
 
-      // Update camera based on keyboard input
-      const moveSpeed = 5;
-      const rotSpeed = 0.02;
-
-      if (keysPressed.current.has('w')) camera.z += moveSpeed;
-      if (keysPressed.current.has('s')) camera.z -= moveSpeed;
-      if (keysPressed.current.has('a')) camera.x -= moveSpeed;
-      if (keysPressed.current.has('d')) camera.x += moveSpeed;
-      if (keysPressed.current.has('q')) camera.y -= moveSpeed;
-      if (keysPressed.current.has('e')) camera.y += moveSpeed;
-      if (keysPressed.current.has('arrowleft')) camera.rotY -= rotSpeed;
-      if (keysPressed.current.has('arrowright')) camera.rotY += rotSpeed;
-      if (keysPressed.current.has('arrowup')) camera.rotX -= rotSpeed;
-      if (keysPressed.current.has('arrowdown')) camera.rotX += rotSpeed;
-
-      setCamera({ ...camera });
-
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
       // Project and sort stars by depth
-      const projectedStars = stars3D.current.map((star) => {
-        // Apply camera rotation
-        const cosY = Math.cos(camera.rotY);
-        const sinY = Math.sin(camera.rotY);
-        const cosX = Math.cos(camera.rotX);
-        const sinX = Math.sin(camera.rotX);
+      const rotation = rotationRef.current;
+      const zoom = zoomRef.current;
 
-        // Rotate around Y axis
+      const projectedStars = stars3D.current.map((star) => {
+        // Rotate the world
+        const cosY = Math.cos(rotation.y);
+        const sinY = Math.sin(rotation.y);
+        const cosX = Math.cos(rotation.x);
+        const sinX = Math.sin(rotation.x);
+
+        // Rotate around Y axis (horizontal drag)
         let x = star.x3d * cosY + star.z3d * sinY;
         let z = -star.x3d * sinY + star.z3d * cosY;
         let y = star.y3d;
 
-        // Rotate around X axis
-        const y2 = y * cosX - z * sinX;
-        const z2 = y * sinX + z * cosX;
+        // Rotate around X axis (vertical drag)
+        let y2 = y * cosX - z * sinX;
+        let z2 = y * sinX + z * cosX;
 
-        // Apply camera position
-        x -= camera.x;
-        y = y2 - camera.y;
-        z = z2 - camera.z;
+        // Apply zoom (distance from viewer)
+        z2 -= zoom;
 
         // Perspective projection
-        const fov = 500;
-        const scale = fov / (fov + z);
+        const scale = 500 / (500 + z2);
         const screenX = canvas.width / 2 + x * scale;
-        const screenY = canvas.height / 2 + y * scale;
+        const screenY = canvas.height / 2 + y2 * scale;
 
         return {
           ...star,
           screenX,
           screenY,
           scale,
-          depth: z,
+          depth: z2,
         };
       });
 
@@ -156,33 +123,35 @@ export function StarSky3D({ stars, onStarClick }: StarSky3DProps) {
 
       // Draw stars
       projectedStars.forEach((star) => {
-        if (star.depth < -fov || star.scale < 0) return; // Behind camera
+        if (star.depth < -500 || star.scale < 0 || star.scale < 0.3) return; // Behind camera or too far
 
         const x = star.screenX!;
         const y = star.screenY!;
         const scale = star.scale!;
 
-        // Twinkle effect
-        const twinkle = Math.sin(time + star.x * 10) * 0.3 + 0.7;
+        // Skip if off screen
+        if (x < -50 || x > canvas.width + 50 || y < -50 || y > canvas.height + 50) return;
+
+        // Simplified rendering - no twinkle for performance
         const baseSize = 3;
         const size = hoveredStar?.id === star.id ? baseSize * 2 : baseSize;
         const finalSize = size * scale;
 
-        // Glow effect
-        const glowSize = finalSize * 6;
+        // Simplified glow effect
+        const glowSize = finalSize * 4;
         const gradient = ctx.createRadialGradient(x, y, 0, x, y, glowSize);
         gradient.addColorStop(0, star.color + 'ff');
-        gradient.addColorStop(0.4, star.color + '60');
+        gradient.addColorStop(0.5, star.color + '40');
         gradient.addColorStop(1, star.color + '00');
 
-        ctx.globalAlpha = twinkle * scale;
+        ctx.globalAlpha = scale;
         ctx.fillStyle = gradient;
         ctx.beginPath();
         ctx.arc(x, y, glowSize, 0, Math.PI * 2);
         ctx.fill();
 
         // Core
-        ctx.globalAlpha = 1 * scale;
+        ctx.globalAlpha = 1;
         ctx.fillStyle = star.color;
         ctx.beginPath();
         ctx.arc(x, y, finalSize, 0, Math.PI * 2);
@@ -200,7 +169,7 @@ export function StarSky3D({ stars, onStarClick }: StarSky3DProps) {
     return () => {
       if (animationFrame) cancelAnimationFrame(animationFrame);
     };
-  }, [stars, dimensions, camera, hoveredStar]);
+  }, [stars, dimensions, hoveredStar]);
 
   // Mouse interactions
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -217,11 +186,9 @@ export function StarSky3D({ stars, onStarClick }: StarSky3DProps) {
       const deltaX = e.clientX - lastMouse.x;
       const deltaY = e.clientY - lastMouse.y;
 
-      setCamera({
-        ...camera,
-        rotY: camera.rotY + deltaX * 0.005,
-        rotX: camera.rotX + deltaY * 0.005,
-      });
+      const rotation = rotationRef.current;
+      rotation.y += deltaX * 0.005;
+      rotation.x += deltaY * 0.005;
 
       setLastMouse({ x: e.clientX, y: e.clientY });
     } else {
@@ -266,6 +233,13 @@ export function StarSky3D({ stars, onStarClick }: StarSky3DProps) {
     }
   };
 
+  const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    const zoom = zoomRef.current;
+    // Zoom in/out based on wheel delta - much faster increment
+    zoomRef.current = Math.max(50, Math.min(15000, zoom + e.deltaY * 10));
+  };
+
   return (
     <div className="fixed inset-0">
       <canvas
@@ -275,16 +249,15 @@ export function StarSky3D({ stars, onStarClick }: StarSky3DProps) {
         onMouseMove={handleMouseMove}
         onMouseLeave={handleMouseUp}
         onClick={handleClick}
+        onWheel={handleWheel}
         className="cursor-grab active:cursor-grabbing"
       />
 
       {/* Controls UI */}
       <div className="fixed bottom-8 left-8 bg-black/60 backdrop-blur-md border border-white/20 rounded-lg p-4 text-xs text-gray-400 space-y-2">
         <div className="font-medium text-white mb-2">Controls</div>
-        <div><span className="text-star-gold">WASD</span> - Move camera</div>
-        <div><span className="text-star-gold">Q/E</span> - Up/Down</div>
-        <div><span className="text-star-gold">Arrows</span> - Rotate view</div>
-        <div><span className="text-star-gold">Drag</span> - Look around</div>
+        <div><span className="text-star-gold">Drag</span> - Rotate view</div>
+        <div><span className="text-star-gold">Scroll</span> - Zoom in/out</div>
         <div><span className="text-star-gold">Click</span> - Select star</div>
       </div>
 
