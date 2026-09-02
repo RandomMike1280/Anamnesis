@@ -11,6 +11,15 @@ import { Textarea } from '@/components/ui/Textarea';
 import { Card } from '@/components/ui/Card';
 import { LoadingPage } from '@/components/ui/Loading';
 import { motion, AnimatePresence } from 'framer-motion';
+import { StarTrailBackground } from '@/components/diary/StarTrailBackground';
+import { MoodCalendar } from '@/components/diary/MoodCalendar';
+import { StreakCounter } from '@/components/ui/StreakCounter';
+import { MemoryTree } from '@/components/game/MemoryTree';
+import { DailyTasks } from '@/components/game/DailyTasks';
+import { InterviewMode } from '@/components/diary/InterviewMode';
+import { MemoryCapsules } from '@/components/diary/MemoryCapsules';
+import { useGameData } from '@/lib/hooks/useGameData';
+import { CalendarIcon, TreeIcon, ClipboardIcon, MicIcon, HourglassIcon, CoinIcon, LockIcon } from '@/components/ui/icons';
 
 export default function DiaryPage() {
   const [user, setUser] = useState<any>(null);
@@ -21,7 +30,10 @@ export default function DiaryPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
+  const [selectedDate, setSelectedDate] = useState<Date | null>(new Date()); // Default to today
+  const [rightTab, setRightTab] = useState<'calendar' | 'tree' | 'tasks' | 'interview' | 'capsules'>('calendar');
   const router = useRouter();
+  const { data: gameData, dailyTasks, waterTree, completeTask, onDiarySaved } = useGameData();
 
   useEffect(() => {
     checkUser();
@@ -59,13 +71,13 @@ export default function DiaryPage() {
         .from('diary_entries')
         .select('*')
         .eq('user_id', userId)
-        .order('entry_date', { ascending: false });
+        .order('entry_date', { ascending: false }) as { data: any[] | null; error: any };
 
       if (error) throw error;
 
       // Decrypt entries client-side
       const decryptedEntries = await Promise.all(
-        data.map(async (entry) => {
+        (data || []).map(async (entry: any) => {
           try {
             const content = password
               ? await decrypt(entry.encrypted_content, password)
@@ -118,7 +130,7 @@ export default function DiaryPage() {
   };
 
   const saveEntry = async () => {
-    if (!newEntry.trim() || !password || !user) return;
+    if (!newEntry.trim() || !password || !user || !selectedDate) return;
 
     setSaving(true);
     try {
@@ -127,10 +139,13 @@ export default function DiaryPage() {
 
       console.log('Saving entry for user:', user.id);
 
-      const { data, error } = await supabase.from('diary_entries').insert({
+      // Use selected date instead of current date
+      const entryDateStr = selectedDate.toISOString().split('T')[0];
+
+      const { data, error } = await (supabase as any).from('diary_entries').insert({
         user_id: user.id,
         encrypted_content: encryptedContent,
-        entry_date: new Date().toISOString().split('T')[0],
+        entry_date: entryDateStr,
       }).select();
 
       console.log('Save result:', { data, error });
@@ -142,6 +157,7 @@ export default function DiaryPage() {
 
       console.log('Entry saved successfully:', data);
 
+      onDiarySaved(newEntry);
       setNewEntry('');
       await loadEntries(user.id);
     } catch (error: any) {
@@ -212,14 +228,11 @@ export default function DiaryPage() {
   if (loading) return <LoadingPage />;
 
   return (
-    <div className="min-h-screen p-4 md:p-8">
-      {/* Background gradient */}
-      <div className="fixed inset-0 opacity-20 pointer-events-none">
-        <div className="absolute top-0 right-0 w-96 h-96 bg-star-gold/30 rounded-full blur-3xl" />
-        <div className="absolute bottom-0 left-0 w-96 h-96 bg-star-blue/30 rounded-full blur-3xl" />
-      </div>
+    <div className="min-h-screen p-4 md:p-8 bg-black">
+      {/* Star trail background */}
+      <StarTrailBackground />
 
-      <div className="max-w-4xl mx-auto relative z-10">
+      <div className="max-w-7xl mx-auto relative z-10">
         {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: -20 }}
@@ -231,19 +244,26 @@ export default function DiaryPage() {
               Your Inner Cosmos
             </h1>
             {profile?.mood && (
-              <div className="flex items-center gap-2">
-                <div
-                  className="w-3 h-3 rounded-full animate-pulse"
-                  style={{ backgroundColor: profile.mood_color }}
-                />
-                <p className="text-sm text-gray-400">
-                  Currently feeling <span className="text-white capitalize">{profile.mood}</span>
-                  {profile.last_mood_update && (
-                    <span className="text-gray-600 ml-2">
-                      • Updated {getRelativeTime(profile.last_mood_update)}
-                    </span>
-                  )}
-                </p>
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <div
+                    className="w-3 h-3 rounded-full animate-pulse"
+                    style={{ backgroundColor: profile.mood_color }}
+                  />
+                  <p className="text-sm text-gray-400">
+                    Currently feeling <span className="text-white capitalize">{profile.mood}</span>
+                    {profile.last_mood_update && (
+                      <span className="text-gray-600 ml-2">
+                        • Updated {getRelativeTime(profile.last_mood_update)}
+                      </span>
+                    )}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 ml-auto">
+                  <span className="text-sm text-amber-400 font-bold flex items-center gap-1.5">
+                    <CoinIcon size={16} /> {gameData.coins}
+                  </span>
+                </div>
               </div>
             )}
           </div>
@@ -257,125 +277,205 @@ export default function DiaryPage() {
           </div>
         </motion.div>
 
-        {/* Password Input */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-        >
-          <Card className="mb-8 bg-gradient-to-br from-white/10 to-white/5">
-            <h2 className="text-lg font-medium mb-4">
-              {password ? 'Encryption password' : 'Enter your password to decrypt entries'}
-            </h2>
-            <div className="flex gap-2">
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && loadEntries(user.id)}
-                placeholder="Password"
-                className="flex-1 px-4 py-2 bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-star-gold/50 transition-all"
-              />
-              <Button onClick={() => loadEntries(user.id)}>
-                {password ? 'Reload' : 'Unlock'}
-              </Button>
-            </div>
-            {password && (
-              <p className="text-xs text-gray-500 mt-2">
-                🔒 All entries encrypted with this password
-              </p>
-            )}
-          </Card>
-        </motion.div>
-
-        {/* New Entry */}
-        {password && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2 }}
-          >
-            <Card className="mb-8 bg-gradient-to-br from-white/10 to-white/5 border-white/20">
-              <Textarea
-                value={newEntry}
-                onChange={(e) => setNewEntry(e.target.value)}
-                placeholder="What's weighing on your soul today?"
-                rows={6}
-                className="mb-4 bg-white/5 text-lg leading-relaxed"
-              />
-              <div className="flex justify-between items-center">
-                <Button
-                  variant="ghost"
-                  onClick={() => runMoodAnalysis(false)}
-                  disabled={analyzing || entries.length === 0}
-                  className="text-sm"
-                >
-                  {analyzing ? (
-                    <>
-                      <span className="inline-block w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin mr-2" />
-                      Analyzing...
-                    </>
-                  ) : (
-                    '✨ Update Mood'
-                  )}
-                </Button>
-                <Button
-                  variant="secondary"
-                  onClick={saveEntry}
-                  disabled={saving || !newEntry.trim()}
-                >
-                  {saving ? 'Saving...' : 'Save Entry'}
-                </Button>
-              </div>
-              <p className="text-xs text-gray-600 mt-3">
-                💡 Mood updates automatically every 24 hours
-              </p>
-            </Card>
-          </motion.div>
-        )}
-
-        {/* Entries Timeline */}
-        <div className="space-y-4">
-          <AnimatePresence>
-            {entries.map((entry, index) => (
+        {/* Two-column layout */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          {/* Left side - Entry Input */}
+          <div className="space-y-6">
+            {/* Streak Counter */}
+            {password && entries.length > 0 && (
               <motion.div
-                key={entry.id}
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -20 }}
-                transition={{ delay: index * 0.05 }}
+                transition={{ delay: 0.05 }}
               >
-                <Card hover className="bg-gradient-to-br from-white/5 to-transparent border-white/10 hover:border-white/20 transition-all">
-                  <div className="flex justify-between items-start mb-4">
-                    <div>
-                      <p className="text-sm font-medium text-gray-300">
-                        {formatDate(entry.entryDate)}
-                      </p>
-                      <p className="text-xs text-gray-600">
-                        {getRelativeTime(entry.createdAt)}
-                      </p>
-                    </div>
-                    <div className="w-2 h-2 bg-star-gold/50 rounded-full" />
+                <StreakCounter entries={entries} />
+              </motion.div>
+            )}
+
+            {password && (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.1 }}
+              >
+                <Card className="bg-gradient-to-br from-white/10 to-white/5 border-white/20">
+                  <Textarea
+                    value={newEntry}
+                    onChange={(e) => setNewEntry(e.target.value)}
+                    placeholder="What's weighing on your soul today?"
+                    rows={12}
+                    className="mb-4 bg-white/5 text-lg leading-relaxed"
+                  />
+                  <div className="flex justify-between items-center">
+                    <Button
+                      variant="ghost"
+                      onClick={() => runMoodAnalysis(false)}
+                      disabled={analyzing || entries.length === 0}
+                      className="text-sm"
+                    >
+                      {analyzing ? (
+                        <>
+                          <span className="inline-block w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin mr-2" />
+                          Analyzing...
+                        </>
+                      ) : (
+                        'Update Mood'
+                      )}
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      onClick={saveEntry}
+                      disabled={saving || !newEntry.trim()}
+                    >
+                      {saving ? 'Saving...' : 'Save Entry'}
+                    </Button>
                   </div>
-                  <p className="text-gray-200 whitespace-pre-wrap leading-relaxed text-lg">
-                    {entry.content}
+                  <p className="text-xs text-gray-600 mt-3">
+                    Mood updates automatically every 24 hours
                   </p>
                 </Card>
               </motion.div>
-            ))}
-          </AnimatePresence>
+            )}
 
-          {entries.length === 0 && password && (
+            {/* Password Input - Small box at bottom */}
             <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="text-center py-16 text-gray-500"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.2 }}
             >
-              <div className="text-4xl mb-4">✨</div>
-              <p className="text-lg">No entries yet</p>
-              <p className="text-sm mt-2">Start writing to see them appear here</p>
+              <Card className="bg-gradient-to-br from-white/5 to-white/5 border-white/10">
+                <div className="flex gap-2 items-center">
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    onKeyPress={(e) => e.key === 'Enter' && loadEntries(user.id)}
+                    placeholder="Enter password"
+                    className="flex-1 px-3 py-2 text-sm bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-star-gold/50 transition-all"
+                  />
+                  <Button size="sm" onClick={() => loadEntries(user.id)}>
+                    {password ? 'Reload' : 'Unlock'}
+                  </Button>
+                </div>
+                {password && (
+                  <p className="text-xs text-gray-500 mt-2">
+                    Encrypted
+                  </p>
+                )}
+              </Card>
             </motion.div>
-          )}
+          </div>
+
+          {/* Right side - Tabbed Panel */}
+          <div className="space-y-4">
+            {/* Tab Bar */}
+            <div className="flex gap-1 overflow-x-auto p-1 bg-white/5 border border-white/10 rounded-xl">
+              {[
+                { id: 'calendar', Icon: CalendarIcon,  title: 'Calendar' },
+                { id: 'tree',     Icon: TreeIcon,      title: 'Tree' },
+                { id: 'tasks',    Icon: ClipboardIcon, title: 'Tasks' },
+                { id: 'interview',Icon: MicIcon,       title: 'Interview' },
+                { id: 'capsules', Icon: HourglassIcon, title: 'Capsules' },
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setRightTab(tab.id as typeof rightTab)}
+                  className={`
+                    flex-1 py-2 px-2 rounded-lg text-xs font-bold whitespace-nowrap transition-all
+                    flex items-center justify-center gap-1.5
+                    ${rightTab === tab.id
+                      ? 'bg-white/20 text-white'
+                      : 'text-gray-500 hover:text-gray-300'}
+                  `}
+                >
+                  <tab.Icon size={14} /> {tab.title}
+                </button>
+              ))}
+            </div>
+
+            <AnimatePresence mode="wait">
+              {rightTab === 'calendar' && (
+                <motion.div
+                  key="calendar"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                >
+                  <Card className="bg-gradient-to-br from-white/10 to-white/5 border-white/20">
+                    {password ? (
+                      <MoodCalendar
+                        entries={entries}
+                        currentMood={profile?.mood}
+                        currentMoodColor={profile?.mood_color}
+                        selectedDate={selectedDate}
+                        onDateSelect={setSelectedDate}
+                      />
+                    ) : (
+                      <div className="text-center py-12 text-gray-500">
+                        <div className="flex justify-center mb-4">
+                          <LockIcon size={40} />
+                        </div>
+                        <p className="text-lg">Enter password to view calendar</p>
+                      </div>
+                    )}
+                  </Card>
+                </motion.div>
+              )}
+
+              {rightTab === 'tree' && (
+                <motion.div
+                  key="tree"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                >
+                  <MemoryTree
+                    level={gameData.tree.level}
+                    exp={gameData.tree.exp}
+                    canWater={!gameData.daily.watered}
+                    onWater={waterTree}
+                  />
+                </motion.div>
+              )}
+
+              {rightTab === 'tasks' && (
+                <motion.div
+                  key="tasks"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                >
+                  <DailyTasks
+                    tasks={dailyTasks}
+                    completedTasks={gameData.daily.completedTasks}
+                    onTaskAction={(id) => completeTask(id)}
+                  />
+                </motion.div>
+              )}
+
+              {rightTab === 'interview' && (
+                <motion.div
+                  key="interview"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                >
+                  <InterviewMode />
+                </motion.div>
+              )}
+
+              {rightTab === 'capsules' && user && (
+                <motion.div
+                  key="capsules"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                >
+                  <MemoryCapsules userId={user.id} />
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
         </div>
       </div>
     </div>

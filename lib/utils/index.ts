@@ -56,22 +56,23 @@ export function debounce<T extends (...args: any[]) => any>(
 }
 
 /**
- * Generate a random position for a star in the sky
- * Based on region clustering (placeholder for real clustering)
+ * Generate a deterministic position for a star in the sky
+ * Based on user ID for consistent positioning across reloads
  */
-export function generateStarPosition(region?: string): { x: number; y: number } {
-  // Simple hash function for consistent positioning per region
-  const hash = region
-    ? region.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0)
-    : Math.random() * 1000;
+export function generateStarPosition(region?: string, userId?: string): { x: number; y: number } {
+  // Use userId for deterministic positioning, fallback to region
+  const seed = userId || region || 'default';
 
-  // Create clusters with some randomness
+  // Simple hash function for consistent positioning
+  const hash = seed.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+
+  // Create deterministic position using golden ratio and pi
   const clusterX = (hash * 0.618033988749895) % 1; // Golden ratio for distribution
   const clusterY = (hash * 0.314159265358979) % 1; // Pi-based distribution
 
-  // Add random offset within cluster
-  const offsetX = (Math.random() - 0.5) * 0.15;
-  const offsetY = (Math.random() - 0.5) * 0.15;
+  // Add deterministic offset based on hash (not random)
+  const offsetX = ((hash * 17) % 100 / 100 - 0.5) * 0.15;
+  const offsetY = ((hash * 23) % 100 / 100 - 0.5) * 0.15;
 
   return {
     x: Math.max(0.05, Math.min(0.95, clusterX + offsetX)),

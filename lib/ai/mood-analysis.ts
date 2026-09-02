@@ -39,11 +39,13 @@ Respond with ONLY a JSON object in this exact format:
 
   try {
     const interaction = await ai.interactions.create({
-      model: 'models/gemini-3.7-flash',
+      model: 'models/gemini-3.5-flash-lite',
       input: prompt,
     });
 
-    const response = interaction.steps?.at(-1)?.output;
+    // `output_text` is the SDK-provided concatenated text of the last model
+    // output; `steps` is not populated on interactions.create responses.
+    const response = interaction.output_text;
 
     if (!response) {
       throw new Error('No response from AI');
@@ -78,5 +80,5 @@ Respond with ONLY a JSON object in this exact format:
  * Get the current model ID
  */
 export function getModelId(): string {
-  return 'models/gemini-3.7-flash';
+  return 'models/gemini-3.5-flash-lite';
 }

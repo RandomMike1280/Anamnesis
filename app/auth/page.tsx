@@ -2,10 +2,12 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { supabase } from '@/lib/supabase/client';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { motion } from 'framer-motion';
+import { WarningIcon } from '@/components/ui/icons';
 
 export default function AuthPage() {
   const [isLogin, setIsLogin] = useState(true);
@@ -38,7 +40,7 @@ export default function AuthPage() {
 
         // Update profile with username
         if (data.user) {
-          await supabase
+          await (supabase as any)
             .from('profiles')
             .update({ username })
             .eq('id', data.user.id);
@@ -180,7 +182,9 @@ export default function AuthPage() {
               transition={{ delay: 0.5 }}
               className="mt-6 p-4 bg-yellow-500/10 border border-yellow-500/20 rounded-lg text-xs text-yellow-400/80 text-center space-y-1"
             >
-              <div className="text-yellow-400 font-medium mb-1">⚠️ Important</div>
+              <div className="text-yellow-400 font-medium mb-1 flex items-center justify-center gap-1.5">
+                <WarningIcon size={14} /> Important
+              </div>
               <p>Your password encrypts all diary entries.</p>
               <p>If you lose it, your data cannot be recovered.</p>
             </motion.div>
@@ -193,12 +197,12 @@ export default function AuthPage() {
           transition={{ delay: 0.6 }}
           className="text-center mt-6"
         >
-          <a
+          <Link
             href="/"
             className="text-sm text-gray-500 hover:text-gray-400 transition-colors"
           >
             ← Back to home
-          </a>
+          </Link>
         </motion.div>
       </motion.div>
     </main>

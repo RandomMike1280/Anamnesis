@@ -16,6 +16,8 @@ interface Star3D extends Star {
   screenX?: number;
   screenY?: number;
   scale?: number;
+  hoverSize?: number; // Current animated hover size
+  targetHoverSize?: number; // Target hover size for easing
 }
 
 export function StarSky3D({ stars, onStarClick }: StarSky3DProps) {
@@ -26,10 +28,13 @@ export function StarSky3D({ stars, onStarClick }: StarSky3DProps) {
     height: typeof window !== 'undefined' ? window.innerHeight : 1080
   });
   const rotationRef = useRef({ x: Math.PI, y: 0 }); // Start right-side up
+  const targetRotationRef = useRef({ x: Math.PI, y: 0 }); // Target rotation for smooth interpolation
   const zoomRef = useRef(1000); // Start at a good middle view
+  const targetZoomRef = useRef(1000); // Target zoom for smooth interpolation
   const [isDragging, setIsDragging] = useState(false);
   const [lastMouse, setLastMouse] = useState({ x: 0, y: 0 });
   const stars3D = useRef<Star3D[]>([]);
+  const glowRotationRef = useRef(0); // Rotation angle for 4-corner glow effect
 
   // Draw 3D grid planes
   const drawGridPlanes = (ctx: CanvasRenderingContext2D, width: number, height: number) => {
@@ -48,6 +53,18 @@ export function StarSky3D({ stars, onStarClick }: StarSky3DProps) {
       { spacing: 2000, minZoom: 5500, maxZoom: 12000 },
       { spacing: 5000, minZoom: 11000, maxZoom: 999999 },
     ];
+
+    // Debug: check which levels are active
+    const activeLevels = gridLevels.filter(level => {
+      if (zoom >= level.minZoom && zoom <= level.minZoom + 100) return true;
+      if (zoom > level.minZoom + 100 && zoom < level.maxZoom - 100) return true;
+      if (zoom >= level.maxZoom - 100 && zoom <= level.maxZoom) return true;
+      return false;
+    });
+
+    if (activeLevels.length === 0) {
+      console.log('NO ACTIVE GRID LEVELS at zoom:', zoom);
+    }
 
     // Helper to project 3D point to 2D
     const project = (x3d: number, y3d: number, z3d: number) => {
@@ -122,45 +139,68 @@ export function StarSky3D({ stars, onStarClick }: StarSky3DProps) {
 
     // Draw a grid plane with given spacing and opacity
     const drawGridLevel = (spacing: number, opacity: number) => {
-      // Calculate grid range - much larger to appear infinite
-      const maxCoord = 50000;
-      const numLines = Math.floor(maxCoord / spacing);
+      // Procedurally calculate which lines are visible based on camera position and zoom
+      // Instead of drawing all lines from -maxCoord to +maxCoord, only draw lines near the visible area
+
+      // Calculate approximate visible range in world space
+      // The visible range depends on zoom and screen dimensions
+      // Add a minimum to ensure grids are visible even at zoom = 0
+      const visibleRange = Math.max(500, zoom * 5); // Approximate world-space units visible
+
+      // Debug at zoom 0
+      if (zoom === 0) {
+        console.log('drawGridLevel called at zoom 0:', { spacing, opacity, visibleRange, zoom });
+      }
+
+      // For each plane, calculate the center of the visible region
+      // For simplicity, assume camera is looking at origin after rotation
+      const gridOrigin = 0;
+
+      // Calculate which grid lines to draw (only those near the visible area)
+      const minLine = Math.floor((gridOrigin - visibleRange) / spacing);
+      const maxLine = Math.ceil((gridOrigin + visibleRange) / spacing);
+
+      if (zoom === 0) {
+        console.log('Grid lines range:', { minLine, maxLine, numLines: maxLine - minLine });
+      }
 
       // Draw XY plane (z=0) - blue
       ctx.strokeStyle = `rgba(59, 130, 246, ${0.2 * opacity})`;
-      ctx.lineWidth = 1;
-      for (let i = -numLines; i <= numLines; i++) {
+      ctx.lineWidth = 0.5;
+      for (let i = minLine; i <= maxLine; i++) {
         const offset = i * spacing;
 
         // Lines parallel to X axis
-        drawLine(-maxCoord, offset, 0, maxCoord, offset, 0);
+        drawLine(-visibleRange * 2, offset, 0, visibleRange * 2, offset, 0);
 
         // Lines parallel to Y axis
-        drawLine(offset, -maxCoord, 0, offset, maxCoord, 0);
+        drawLine(offset, -visibleRange * 2, 0, offset, visibleRange * 2, 0);
       }
 
       // Draw XZ plane (y=0) - green
       ctx.strokeStyle = `rgba(34, 197, 94, ${0.2 * opacity})`;
-      for (let i = -numLines; i <= numLines; i++) {
+      ctx.lineWidth = 0.5;
+      for (let i = minLine; i <= maxLine; i++) {
         const offset = i * spacing;
 
         // Lines parallel to X axis
-        drawLine(-maxCoord, 0, offset, maxCoord, 0, offset);
+        drawLine(-visibleRange * 2, 0, offset, visibleRange * 2, 0, offset);
 
         // Lines parallel to Z axis
-        drawLine(offset, 0, -maxCoord, offset, 0, maxCoord);
+        drawLine(offset, 0, -visibleRange * 2, offset, 0, visibleRange * 2);
       }
 
       // Draw YZ plane (x=0) - red
       ctx.strokeStyle = `rgba(239, 68, 68, ${0.2 * opacity})`;
-      for (let i = -numLines; i <= numLines; i++) {
+      ctx.lineWidth = 0.5;
+      for (let i = minLine; i <= maxLine; i++) {
         const offset = i * spacing;
 
         // Lines parallel to Y axis
-        drawLine(0, -maxCoord, offset, 0, maxCoord, offset);
+        drawLine(0, -visibleRange * 2, offset, 0, visibleRange * 2, offset);
 
         // Lines parallel to Z axis
-        drawLine(0, offset, -maxCoord, 0, offset, maxCoord);
+        drawLine(0, offset, -visibleRange * 2, 0, offset, visibleRange * 2);
       }
     };
 
@@ -168,38 +208,54 @@ export function StarSky3D({ stars, onStarClick }: StarSky3DProps) {
     gridLevels.forEach(level => {
       let opacity = 0;
 
+      // Fade in range
+      const fadeInEnd = level.minZoom + 100;
+      // Fade out range
+      const fadeOutStart = level.maxZoom - 100;
+
       // Fade in
-      if (zoom >= level.minZoom && zoom <= level.minZoom + 100) {
-        opacity = (zoom - level.minZoom) / 100;
+      if (zoom >= level.minZoom && zoom <= fadeInEnd) {
+        opacity = Math.min(1, (zoom - level.minZoom + 10) / 100); // +10 to give 0.1 opacity at minZoom
       }
       // Fully visible
-      else if (zoom > level.minZoom + 100 && zoom < level.maxZoom - 100) {
+      else if (zoom > fadeInEnd && zoom < fadeOutStart) {
         opacity = 1;
       }
       // Fade out
-      else if (zoom >= level.maxZoom - 100 && zoom <= level.maxZoom) {
-        opacity = (level.maxZoom - zoom) / 100;
+      else if (zoom >= fadeOutStart && zoom <= level.maxZoom) {
+        opacity = (level.maxZoom - zoom + 10) / 100; // +10 to avoid hitting 0
       }
 
-      if (opacity > 0.01) {
+      if (opacity >= 0.05) {  // Changed from > to >= and raised threshold
         drawGridLevel(level.spacing, opacity);
       }
     });
   };
 
+  // Seeded random number generator for deterministic positions
+  const seededRandom = (seed: number) => {
+    const x = Math.sin(seed) * 10000;
+    return x - Math.floor(x);
+  };
+
   // Initialize 3D positions
   useEffect(() => {
     stars3D.current = stars.map((star) => {
+      // Use star ID/timestamp as seed for deterministic random
+      const seed = (star as any).timestamp || 0;
+
       // Distribute stars in 3D sphere
       const theta = star.x * Math.PI * 2; // Horizontal angle
       const phi = star.y * Math.PI; // Vertical angle
-      const radius = 300 + Math.random() * 200; // Distance from center
+      const radius = 300 + seededRandom(seed) * 200; // Deterministic distance from center
 
       return {
         ...star,
         x3d: radius * Math.sin(phi) * Math.cos(theta),
         y3d: radius * Math.cos(phi),
         z3d: radius * Math.sin(phi) * Math.sin(theta),
+        hoverSize: 1, // Start at normal size
+        targetHoverSize: 1,
       };
     });
   }, [stars]);
@@ -235,15 +291,45 @@ export function StarSky3D({ stars, onStarClick }: StarSky3DProps) {
     const animate = () => {
       time += 0.01;
 
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      // Smooth interpolation for rotation (easing)
+      const rotationEasing = 0.1; // Lower = smoother but slower
+      const rotation = rotationRef.current;
+      const targetRotation = targetRotationRef.current;
+      rotation.x += (targetRotation.x - rotation.x) * rotationEasing;
+      rotation.y += (targetRotation.y - rotation.y) * rotationEasing;
+
+      // Smooth interpolation for zoom
+      const zoomEasing = 0.15; // Lower = smoother but slower
+      const zoom = zoomRef.current;
+      const targetZoom = targetZoomRef.current;
+      zoomRef.current += (targetZoom - zoom) * zoomEasing;
+
+      // Rotate glow effect (slower)
+      glowRotationRef.current += 0.02;
+
+      // Update hover sizes with easing
+      stars3D.current.forEach((star) => {
+        // Set target hover size based on whether this star is hovered
+        if (hoveredStar?.id === star.id) {
+          star.targetHoverSize = 2.5;
+        } else {
+          star.targetHoverSize = 1;
+        }
+
+        // Ease current size towards target
+        const hoverEasing = 0.15;
+        star.hoverSize = star.hoverSize || 1;
+        star.hoverSize += (star.targetHoverSize! - star.hoverSize) * hoverEasing;
+      });
+
+      // Fill with pitch black background
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
 
       // Draw grid planes
       drawGridPlanes(ctx, canvas.width, canvas.height);
 
       // Project and sort stars by depth
-      const rotation = rotationRef.current;
-      const zoom = zoomRef.current;
-
       const projectedStars = stars3D.current.map((star) => {
         // Rotate the world
         const cosY = Math.cos(rotation.y);
@@ -291,12 +377,121 @@ export function StarSky3D({ stars, onStarClick }: StarSky3DProps) {
         // Skip if off screen
         if (x < -50 || x > canvas.width + 50 || y < -50 || y > canvas.height + 50) return;
 
-        // Simplified rendering - no twinkle for performance
+        // Use animated hover size
         const baseSize = 3;
-        const size = hoveredStar?.id === star.id ? baseSize * 2 : baseSize;
+        const hoverMultiplier = star.hoverSize || 1;
+        const size = baseSize * hoverMultiplier;
         const finalSize = size * scale;
 
-        // Simplified glow effect
+        // 4-pointed star sparkle effect for hovered star
+        if (hoveredStar?.id === star.id && hoverMultiplier > 1.2) {
+          const sparkleAngle = glowRotationRef.current;
+          const sparkleLength = finalSize * 2.5 * (hoverMultiplier - 1);
+          const sparkleLength2 = finalSize * 2 * (hoverMultiplier - 1); // Smaller second star
+
+          // Helper function to make color whiter
+          const whitenColor = (hexColor: string) => {
+            // Parse hex color (assuming format like #RRGGBB)
+            const r = parseInt(hexColor.slice(1, 3), 16);
+            const g = parseInt(hexColor.slice(3, 5), 16);
+            const b = parseInt(hexColor.slice(5, 7), 16);
+
+            // Add 100 to each channel and cap at 255
+            const wr = Math.min(255, r + 100);
+            const wg = Math.min(255, g + 100);
+            const wb = Math.min(255, b + 100);
+
+            return `#${wr.toString(16).padStart(2, '0')}${wg.toString(16).padStart(2, '0')}${wb.toString(16).padStart(2, '0')}`;
+          };
+
+          const whiteColor = whitenColor(star.color);
+
+          ctx.globalAlpha = scale * 0.6 * (hoverMultiplier - 1);
+
+          // Draw first set of 4 diamond-shaped rays (original angle)
+          for (let i = 0; i < 4; i++) {
+            const angle = sparkleAngle + (i * Math.PI / 2);
+
+            // Create a gradient along the ray direction
+            const rayEndX = x + Math.cos(angle) * sparkleLength;
+            const rayEndY = y + Math.sin(angle) * sparkleLength;
+
+            const rayGradient = ctx.createLinearGradient(x, y, rayEndX, rayEndY);
+            rayGradient.addColorStop(0, star.color + 'ff');
+            rayGradient.addColorStop(0.3, star.color + 'aa');
+            rayGradient.addColorStop(1, star.color + '00');
+
+            ctx.fillStyle = rayGradient;
+
+            // Draw diamond-shaped ray
+            ctx.beginPath();
+            ctx.moveTo(x, y); // Center
+
+            // Calculate perpendicular offset for width
+            const perpAngle = angle + Math.PI / 2;
+            const width = sparkleLength * 0.15;
+
+            // One side of the ray
+            const midX = x + Math.cos(angle) * sparkleLength * 0.4;
+            const midY = y + Math.sin(angle) * sparkleLength * 0.4;
+
+            ctx.lineTo(
+              midX + Math.cos(perpAngle) * width,
+              midY + Math.sin(perpAngle) * width
+            );
+            ctx.lineTo(rayEndX, rayEndY); // Tip
+            ctx.lineTo(
+              midX - Math.cos(perpAngle) * width,
+              midY - Math.sin(perpAngle) * width
+            );
+
+            ctx.closePath();
+            ctx.fill();
+          }
+
+          // Draw second set of 4 diamond-shaped rays (rotated 45 degrees, whiter and smaller)
+          for (let i = 0; i < 4; i++) {
+            const angle = sparkleAngle + (i * Math.PI / 2) + (Math.PI / 4); // +45 degrees
+
+            // Create a gradient along the ray direction
+            const rayEndX = x + Math.cos(angle) * sparkleLength2;
+            const rayEndY = y + Math.sin(angle) * sparkleLength2;
+
+            const rayGradient = ctx.createLinearGradient(x, y, rayEndX, rayEndY);
+            rayGradient.addColorStop(0, whiteColor + 'ff');
+            rayGradient.addColorStop(0.3, whiteColor + 'aa');
+            rayGradient.addColorStop(1, whiteColor + '00');
+
+            ctx.fillStyle = rayGradient;
+
+            // Draw diamond-shaped ray
+            ctx.beginPath();
+            ctx.moveTo(x, y); // Center
+
+            // Calculate perpendicular offset for width
+            const perpAngle = angle + Math.PI / 2;
+            const width = sparkleLength2 * 0.15;
+
+            // One side of the ray
+            const midX = x + Math.cos(angle) * sparkleLength2 * 0.4;
+            const midY = y + Math.sin(angle) * sparkleLength2 * 0.4;
+
+            ctx.lineTo(
+              midX + Math.cos(perpAngle) * width,
+              midY + Math.sin(perpAngle) * width
+            );
+            ctx.lineTo(rayEndX, rayEndY); // Tip
+            ctx.lineTo(
+              midX - Math.cos(perpAngle) * width,
+              midY - Math.sin(perpAngle) * width
+            );
+
+            ctx.closePath();
+            ctx.fill();
+          }
+        }
+
+        // Main glow effect
         const glowSize = finalSize * 4;
         const gradient = ctx.createRadialGradient(x, y, 0, x, y, glowSize);
         gradient.addColorStop(0, star.color + 'ff');
@@ -345,9 +540,9 @@ export function StarSky3D({ stars, onStarClick }: StarSky3DProps) {
       const deltaX = e.clientX - lastMouse.x;
       const deltaY = e.clientY - lastMouse.y;
 
-      const rotation = rotationRef.current;
-      rotation.y += deltaX * 0.005;
-      rotation.x += deltaY * 0.005;
+      const targetRotation = targetRotationRef.current;
+      targetRotation.y += deltaX * 0.005;
+      targetRotation.x += deltaY * 0.005;
 
       setLastMouse({ x: e.clientX, y: e.clientY });
     } else {
@@ -394,10 +589,9 @@ export function StarSky3D({ stars, onStarClick }: StarSky3DProps) {
 
   const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
     e.preventDefault();
-    const zoom = zoomRef.current;
-    const newZoom = Math.max(0, Math.min(10000, zoom + e.deltaY * 5));
-    console.log('Wheel event:', { oldZoom: zoom, deltaY: e.deltaY, newZoom });
-    zoomRef.current = newZoom;
+    const targetZoom = targetZoomRef.current;
+    const newZoom = Math.max(0, Math.min(10000, targetZoom + e.deltaY * 5));
+    targetZoomRef.current = newZoom;
   };
 
   return (

@@ -135,3 +135,61 @@ CREATE TRIGGER update_diary_entries_updated_at
   BEFORE UPDATE ON diary_entries
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at();
+
+-- Love Wall Messages table (anonymous positive messages)
+CREATE TABLE love_wall_messages (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+  content TEXT NOT NULL CHECK (char_length(content) <= 280),
+  likes INTEGER DEFAULT 0 NOT NULL CHECK (likes >= 0)
+);
+
+-- Memory Capsules table (time-locked messages)
+CREATE TABLE memory_capsules (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID REFERENCES profiles(id) ON DELETE CASCADE NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+  message TEXT NOT NULL,
+  unlock_year INTEGER NOT NULL CHECK (unlock_year >= EXTRACT(YEAR FROM CURRENT_DATE)),
+  is_unlocked BOOLEAN DEFAULT FALSE NOT NULL
+);
+
+-- Indexes for new tables
+CREATE INDEX idx_love_wall_created_at ON love_wall_messages(created_at DESC);
+CREATE INDEX idx_memory_capsules_user_id ON memory_capsules(user_id);
+CREATE INDEX idx_memory_capsules_unlock_year ON memory_capsules(unlock_year);
+
+-- Enable RLS on new tables
+ALTER TABLE love_wall_messages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE memory_capsules ENABLE ROW LEVEL SECURITY;
+
+-- Love Wall: Public read, anyone can post (anonymous)
+CREATE POLICY "Love wall messages are publicly readable"
+  ON love_wall_messages FOR SELECT
+  USING (true);
+
+CREATE POLICY "Anyone can post to love wall"
+  ON love_wall_messages FOR INSERT
+  WITH CHECK (true);
+
+CREATE POLICY "Anyone can update likes on love wall messages"
+  ON love_wall_messages FOR UPDATE
+  USING (true)
+  WITH CHECK (true);
+
+-- Memory Capsules: Private, only owner can access
+CREATE POLICY "Users can view their own memory capsules"
+  ON memory_capsules FOR SELECT
+  USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can insert their own memory capsules"
+  ON memory_capsules FOR INSERT
+  WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update their own memory capsules"
+  ON memory_capsules FOR UPDATE
+  USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete their own memory capsules"
+  ON memory_capsules FOR DELETE
+  USING (auth.uid() = user_id);

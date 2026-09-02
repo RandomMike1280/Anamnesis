@@ -35,7 +35,7 @@ export async function POST(request: Request) {
       .select('encrypted_content')
       .eq('user_id', userId)
       .order('entry_date', { ascending: false })
-      .limit(limit);
+      .limit(limit) as { data: Array<{ encrypted_content: string }> | null; error: any };
 
     console.log('Mood API - userId:', userId);
     console.log('Mood API - entries found:', entries?.length);
@@ -67,7 +67,7 @@ export async function POST(request: Request) {
     const mood = await analyzeMood(decryptedEntries, apiKey);
 
     // Update profile
-    await supabase
+    await (supabase as any)
       .from('profiles')
       .update({
         mood: mood.mood,

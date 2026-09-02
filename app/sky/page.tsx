@@ -5,17 +5,29 @@ import { supabase } from '@/lib/supabase/client';
 import { generateStarPosition, getMoodColor } from '@/lib/utils';
 import type { Star } from '@/types';
 import { StarSky3D } from '@/components/sky/StarSky3D';
+import { StarSparkle } from '@/components/sky/StarSparkle';
 import { Modal } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { LoadingPage } from '@/components/ui/Loading';
 import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
+import { HeartIcon, ZapIcon, FrownIcon, ThumbsUpIcon, HugIcon, SparkleIcon } from '@/components/ui/icons';
 
 export default function SkyPage() {
   const [stars, setStars] = useState<Star[]>([]);
   const [selectedStar, setSelectedStar] = useState<Star | null>(null);
   const [loading, setLoading] = useState(true);
+  const [reaction, setReaction] = useState<string | null>(null);
   const router = useRouter();
+
+  const reactions = [
+    { Icon: HeartIcon, label: 'Love' },
+    { Icon: ZapIcon, label: 'Wow' },
+    { Icon: FrownIcon, label: 'Sad' },
+    { Icon: ThumbsUpIcon, label: 'Like' },
+    { Icon: HugIcon, label: 'Hug' },
+    { Icon: SparkleIcon, label: 'Inspire' },
+  ];
 
   useEffect(() => {
     loadStars();
@@ -42,12 +54,12 @@ export default function SkyPage() {
       const { data, error } = await supabase
         .from('profiles')
         .select('id, username, bio, quote, region, mood, mood_color')
-        .not('mood', 'is', null);
+        .not('mood', 'is', null) as { data: any[] | null; error: any };
 
       if (error) throw error;
 
-      const starsData: Star[] = data.map((profile) => {
-        const position = generateStarPosition(profile.region || undefined);
+      const starsData: Star[] = (data || []).map((profile: any) => {
+        const position = generateStarPosition(profile.region || undefined, profile.id);
         return {
           id: profile.id,
           username: profile.username,
@@ -116,13 +128,9 @@ export default function SkyPage() {
               <motion.div
                 initial={{ scale: 0 }}
                 animate={{ scale: 1 }}
-                className="w-20 h-20 rounded-full relative"
-                style={{
-                  backgroundColor: selectedStar.color,
-                  boxShadow: `0 0 40px ${selectedStar.color}, 0 0 80px ${selectedStar.color}40`,
-                }}
+                className="w-32 h-32 relative"
               >
-                <div className="absolute inset-0 rounded-full animate-ping opacity-20" style={{ backgroundColor: selectedStar.color }} />
+                <StarSparkle color={selectedStar.color} size={80} />
               </motion.div>
             </div>
 
@@ -135,7 +143,7 @@ export default function SkyPage() {
 
               {selectedStar.region && (
                 <p className="text-xs text-gray-500">
-                  📍 {selectedStar.region}
+                  {selectedStar.region}
                 </p>
               )}
             </div>
@@ -153,6 +161,40 @@ export default function SkyPage() {
                 <p className="text-gray-300 leading-relaxed">{selectedStar.bio}</p>
               </div>
             )}
+
+            {/* Reactions */}
+            <div className="bg-white/5 border border-white/10 rounded-xl p-4">
+              <p className="text-sm text-gray-400 mb-3">Send a reaction</p>
+              <div className="flex gap-2 flex-wrap">
+                {reactions.map((r) => (
+                  <motion.button
+                    key={r.label}
+                    whileHover={{ scale: 1.1 }}
+                    whileTap={{ scale: 0.9 }}
+                    onClick={() => {
+                      setReaction(r.label);
+                      setTimeout(() => setReaction(null), 2000);
+                    }}
+                    title={r.label}
+                    className={`
+                      px-4 py-2 rounded-lg text-gray-300 transition-all
+                      ${reaction === r.label ? 'bg-white/20 text-white' : 'bg-white/5 hover:bg-white/10 hover:text-white'}
+                    `}
+                  >
+                    <r.Icon size={22} />
+                  </motion.button>
+                ))}
+              </div>
+              {reaction && (
+                <motion.p
+                  initial={{ opacity: 0, y: 5 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="text-xs text-emerald-400 mt-3 text-center"
+                >
+                  {reaction} reaction sent!
+                </motion.p>
+              )}
+            </div>
 
             <div className="pt-4 border-t border-white/10 flex gap-2">
               <Button
