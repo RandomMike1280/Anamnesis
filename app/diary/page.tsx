@@ -20,6 +20,7 @@ import { InterviewMode } from '@/components/diary/InterviewMode';
 import { MemoryCapsules } from '@/components/diary/MemoryCapsules';
 import { useGameData } from '@/lib/hooks/useGameData';
 import { CalendarIcon, TreeIcon, ClipboardIcon, MicIcon, HourglassIcon, CoinIcon, LockIcon } from '@/components/ui/icons';
+import { DailyQuote } from '@/components/ui/DailyQuote';
 
 export default function DiaryPage() {
   const [user, setUser] = useState<any>(null);
@@ -267,10 +268,24 @@ export default function DiaryPage() {
               </div>
             )}
           </div>
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" onClick={() => router.push('/wall')}>
+              Love Wall
+            </Button>
             <Button variant="ghost" onClick={() => router.push('/sky')}>
               View Sky
             </Button>
+            <button
+              onClick={() => router.push(`/profile/${user.id}`)}
+              className="w-9 h-9 rounded-full bg-gradient-to-br from-white/20 to-white/10 border border-white/20 hover:border-white/40 transition-all flex items-center justify-center text-white font-semibold"
+              title="Profile"
+            >
+              {profile?.avatar_url ? (
+                <img src={profile.avatar_url} alt="Profile" className="w-full h-full rounded-full object-cover" />
+              ) : (
+                <span className="text-sm">{(profile?.display_name || profile?.username || 'U')[0].toUpperCase()}</span>
+              )}
+            </button>
             <Button variant="ghost" onClick={signOut}>
               Sign Out
             </Button>
@@ -368,6 +383,9 @@ export default function DiaryPage() {
 
           {/* Right side - Tabbed Panel */}
           <div className="space-y-4">
+            {/* Daily Quote */}
+            <DailyQuote />
+
             {/* Tab Bar */}
             <div className="flex gap-1 overflow-x-auto p-1 bg-white/5 border border-white/10 rounded-xl">
               {[

@@ -18,6 +18,8 @@ export default function SkyPage() {
   const [selectedStar, setSelectedStar] = useState<Star | null>(null);
   const [loading, setLoading] = useState(true);
   const [reaction, setReaction] = useState<string | null>(null);
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [currentProfile, setCurrentProfile] = useState<any>(null);
   const router = useRouter();
 
   const reactions = [
@@ -30,6 +32,7 @@ export default function SkyPage() {
   ];
 
   useEffect(() => {
+    loadCurrentUser();
     loadStars();
 
     // Subscribe to realtime updates
@@ -49,20 +52,35 @@ export default function SkyPage() {
     };
   }, []);
 
+  const loadCurrentUser = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    setCurrentUser(user);
+
+    if (user) {
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .single();
+      setCurrentProfile(profileData);
+    }
+  };
+
   const loadStars = async () => {
     try {
       const { data, error } = await supabase
         .from('profiles')
-        .select('id, username, bio, quote, region, mood, mood_color')
+        .select('id, username, display_name, bio, quote, region, mood, mood_color')
         .not('mood', 'is', null) as { data: any[] | null; error: any };
 
       if (error) throw error;
 
       const starsData: Star[] = (data || []).map((profile: any) => {
         const position = generateStarPosition(profile.region || undefined, profile.id);
+        const displayName = profile.display_name || profile.username || `soul_${profile.id.slice(0, 8)}`;
         return {
           id: profile.id,
-          username: profile.username,
+          username: displayName,
           bio: profile.bio,
           quote: profile.quote,
           region: profile.region,
@@ -103,13 +121,31 @@ export default function SkyPage() {
             {stars.length} souls wandering the cosmos
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" onClick={() => router.push('/wall')}>
+            Love Wall
+          </Button>
           <Button variant="ghost" onClick={() => router.push('/diary')}>
             My Diary
           </Button>
           <Button variant="ghost" onClick={() => router.push('/messages')}>
             Messages
           </Button>
+          {currentUser && (
+            <button
+              onClick={() => router.push(`/profile/${currentUser.id}`)}
+              className="w-9 h-9 rounded-full bg-gradient-to-br from-white/20 to-white/10 border border-white/20 hover:border-white/40 transition-all flex items-center justify-center text-white font-semibold overflow-hidden"
+              title="Profile"
+            >
+              {currentProfile?.avatar_url ? (
+                <img src={currentProfile.avatar_url} alt="Profile" className="w-full h-full object-cover" />
+              ) : (
+                <span className="text-sm">
+                  {(currentProfile?.display_name || currentProfile?.username || 'U')[0].toUpperCase()}
+                </span>
+              )}
+            </button>
+          )}
         </div>
       </motion.div>
 
@@ -120,7 +156,7 @@ export default function SkyPage() {
       <Modal
         isOpen={!!selectedStar}
         onClose={() => setSelectedStar(null)}
-        title={selectedStar?.username || 'Anonymous Star'}
+        title={selectedStar?.username || 'Wandering Soul'}
       >
         {selectedStar && (
           <div className="space-y-6">
@@ -197,6 +233,14 @@ export default function SkyPage() {
             </div>
 
             <div className="pt-4 border-t border-white/10 flex gap-2">
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  router.push(`/profile/${selectedStar.id}`);
+                }}
+              >
+                View Profile
+              </Button>
               <Button
                 variant="secondary"
                 className="flex-1"

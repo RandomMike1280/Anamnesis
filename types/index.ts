@@ -38,4 +38,8 @@ export interface Message {
   content: string; // Decrypted content
   createdAt: Date;
   readAt: Date | null;
+  mediaUrl?: string | null;
+  mediaType?: 'image' | 'video' | 'audio' | 'file' | null;
+  editedAt?: Date | null;
+  deletedAt?: Date | null;
 }
