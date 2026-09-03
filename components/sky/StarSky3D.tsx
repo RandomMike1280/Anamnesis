@@ -377,8 +377,10 @@ export function StarSky3D({ stars, onStarClick }: StarSky3DProps) {
         // Skip if off screen
         if (x < -50 || x > canvas.width + 50 || y < -50 || y > canvas.height + 50) return;
 
-        // Use animated hover size
-        const baseSize = 3;
+        // Star size scales with journal size
+        // 0 entries = size 2, 10 = 3.5, 50 = 5, 100+ = 7 (logarithmic)
+        const entryCount = (star as any).entry_count || 0;
+        const baseSize = 2 + Math.min(5, Math.log2(entryCount + 1) * 1.5);
         const hoverMultiplier = star.hoverSize || 1;
         const size = baseSize * hoverMultiplier;
         const finalSize = size * scale;

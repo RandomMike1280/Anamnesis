@@ -17,6 +17,10 @@ export interface UserProfile {
   moodColor: string | null;
   moodConfidence: number | null;
   lastMoodUpdate: Date | null;
+  encrypted_dek: string | null; // Envelope encryption: DEK encrypted with PIN
+  entry_count: number; // Number of diary entries (for star size)
+  totp_secret: string | null; // TOTP secret for authenticator app
+  totp_enabled: boolean; // Whether TOTP is enabled
 }
 
 export interface Star {
@@ -29,6 +33,7 @@ export interface Star {
   color: string;
   x: number; // Position in sky (0-1)
   y: number; // Position in sky (0-1)
+  entry_count?: number; // Number of diary entries (affects star size)
 }
 
 export interface Message {

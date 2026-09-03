@@ -70,7 +70,7 @@ export default function SkyPage() {
     try {
       const { data, error } = await supabase
         .from('profiles')
-        .select('id, username, display_name, bio, quote, region, mood, mood_color')
+        .select('id, username, display_name, bio, quote, region, mood, mood_color, entry_count')
         .not('mood', 'is', null) as { data: any[] | null; error: any };
 
       if (error) throw error;
@@ -81,6 +81,16 @@ export default function SkyPage() {
         return {
           id: profile.id,
           username: displayName,
+          bio: profile.bio,
+          quote: profile.quote,
+          region: profile.region,
+          mood: profile.mood as any,
+          color: profile.mood_color || getMoodColor(profile.mood || 'happy'),
+          x: position.x,
+          y: position.y,
+          entry_count: profile.entry_count || 0,
+        };
+      });
           bio: profile.bio,
           quote: profile.quote,
           region: profile.region,
