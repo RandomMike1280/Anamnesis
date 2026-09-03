@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase/client';
-import { encrypt, decrypt } from '@/lib/crypto/encryption';
+import { encryptData, decryptData, decryptDEK, encodeDEK } from '@/lib/crypto/envelope';
 import { formatDate, getRelativeTime } from '@/lib/utils';
 import type { DiaryEntry } from '@/types';
 import { Button } from '@/components/ui/Button';
@@ -18,6 +18,7 @@ import { MemoryTree } from '@/components/game/MemoryTree';
 import { DailyTasks } from '@/components/game/DailyTasks';
 import { InterviewMode } from '@/components/diary/InterviewMode';
 import { MemoryCapsules } from '@/components/diary/MemoryCapsules';
+import { PINSetup } from '@/components/auth/PINSetup';
 import { useGameData } from '@/lib/hooks/useGameData';
 import { CalendarIcon, TreeIcon, ClipboardIcon, MicIcon, HourglassIcon, CoinIcon, LockIcon } from '@/components/ui/icons';
 import { DailyQuote } from '@/components/ui/DailyQuote';
@@ -27,7 +28,11 @@ export default function DiaryPage() {
   const [profile, setProfile] = useState<any>(null);
   const [entries, setEntries] = useState<DiaryEntry[]>([]);
   const [newEntry, setNewEntry] = useState('');
-  const [password, setPassword] = useState('');
+  const [dek, setDEK] = useState<Uint8Array | null>(null);
+  const [needsPINSetup, setNeedsPINSetup] = useState(false);
+  const [showPINPrompt, setShowPINPrompt] = useState(false);
+  const [pinInput, setPinInput] = useState('');
+  const [pinError, setPinError] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
@@ -42,10 +47,10 @@ export default function DiaryPage() {
 
   // Check for auto mood analysis (once per day)
   useEffect(() => {
-    if (user && entries.length > 0 && password) {
+    if (user && entries.length > 0 && dek) {
       checkAndRunAutoMoodAnalysis();
     }
-  }, [user, entries, password]);
+  }, [user, entries, dek]);
 
   const checkUser = async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -63,10 +68,24 @@ export default function DiaryPage() {
       .single();
 
     setProfile(profileData);
-    loadEntries(user.id);
+
+    // Check if user has set up PIN/DEK
+    if (!profileData?.encrypted_dek) {
+      setNeedsPINSetup(true);
+      setLoading(false);
+    } else {
+      setShowPINPrompt(true);
+      setLoading(false);
+    }
   };
 
-  const loadEntries = async (userId: string) => {
+  const loadEntries = async (userId: string, dekToUse?: Uint8Array) => {
+    const activeDEK = dekToUse || dek;
+    if (!activeDEK) {
+      setLoading(false);
+      return;
+    }
+
     try {
       const { data, error } = await supabase
         .from('diary_entries')
@@ -80,9 +99,7 @@ export default function DiaryPage() {
       const decryptedEntries = await Promise.all(
         (data || []).map(async (entry: any) => {
           try {
-            const content = password
-              ? await decrypt(entry.encrypted_content, password)
-              : '[Locked - Enter password to decrypt]';
+            const content = await decryptData(entry.encrypted_content, activeDEK);
             return {
               id: entry.id,
               userId: entry.user_id,
@@ -95,7 +112,7 @@ export default function DiaryPage() {
             return {
               id: entry.id,
               userId: entry.user_id,
-              content: '[Failed to decrypt - Wrong password?]',
+              content: '[Failed to decrypt]',
               createdAt: new Date(entry.created_at),
               updatedAt: new Date(entry.updated_at),
               entryDate: new Date(entry.entry_date),
@@ -131,12 +148,12 @@ export default function DiaryPage() {
   };
 
   const saveEntry = async () => {
-    if (!newEntry.trim() || !password || !user || !selectedDate) return;
+    if (!newEntry.trim() || !dek || !user || !selectedDate) return;
 
     setSaving(true);
     try {
       // Encrypt content client-side
-      const encryptedContent = await encrypt(newEntry, password);
+      const encryptedContent = await encryptData(newEntry, dek);
 
       console.log('Saving entry for user:', user.id);
 
@@ -171,7 +188,7 @@ export default function DiaryPage() {
   };
 
   const runMoodAnalysis = async (silent = false) => {
-    if (!user || entries.length === 0 || !password) return;
+    if (!user || entries.length === 0 || !dek) return;
 
     setAnalyzing(true);
     try {
@@ -187,7 +204,7 @@ export default function DiaryPage() {
         },
         body: JSON.stringify({
           userId: user.id,
-          password: password,
+          dekBase64: encodeDEK(dek),
           limit: 5,
         }),
       });
@@ -228,6 +245,83 @@ export default function DiaryPage() {
 
   if (loading) return <LoadingPage />;
 
+  // First-time PIN setup
+  if (needsPINSetup) {
+    return (
+      <PINSetup
+        userId={user.id}
+        onComplete={async (newPIN, newDEK) => {
+          setDEK(newDEK);
+          setNeedsPINSetup(false);
+          const { data: profileData } = await supabase.from('profiles').select('*').eq('id', user.id).single();
+          setProfile(profileData);
+          await loadEntries(user.id, newDEK);
+        }}
+      />
+    );
+  }
+
+  // PIN unlock prompt
+  if (showPINPrompt) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-4 bg-black text-white">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="w-full max-w-sm"
+        >
+          <div className="bg-gradient-to-br from-white/10 to-white/5 border border-white/20 rounded-2xl p-8 backdrop-blur-md">
+            <div className="flex justify-center mb-6">
+              <div className="w-16 h-16 rounded-full bg-violet-500/20 flex items-center justify-center">
+                <LockIcon size={32} className="text-violet-400" />
+              </div>
+            </div>
+            <h1 className="text-2xl font-bold text-center mb-2">Enter PIN</h1>
+            <p className="text-sm text-gray-400 text-center mb-6">
+              Enter your diary PIN to decrypt your entries.
+            </p>
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setPinError('');
+                try {
+                  const decryptedDEK = await decryptDEK(profile.encrypted_dek, pinInput);
+                  setDEK(decryptedDEK);
+                  setShowPINPrompt(false);
+                  setLoading(true);
+                  await loadEntries(user.id, decryptedDEK);
+                } catch {
+                  setPinError('Incorrect PIN');
+                }
+              }}
+              className="space-y-4"
+            >
+              <input
+                type="password"
+                inputMode="numeric"
+                value={pinInput}
+                onChange={(e) => setPinInput(e.target.value.replace(/\D/g, ''))}
+                placeholder="••••••"
+                maxLength={12}
+                autoFocus
+                className="w-full text-center text-2xl tracking-widest px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-violet-500/50"
+              />
+              {pinError && (
+                <p className="text-sm text-red-400 text-center">{pinError}</p>
+              )}
+              <button
+                type="submit"
+                className="w-full py-3 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-bold transition-all disabled:opacity-40"
+                disabled={!pinInput}
+              >
+                Unlock
+              </button>
+            </form>
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
   return (
     <div className="min-h-screen p-4 md:p-8 bg-black">
       {/* Star trail background */}
@@ -297,7 +391,7 @@ export default function DiaryPage() {
           {/* Left side - Entry Input */}
           <div className="space-y-6">
             {/* Streak Counter */}
-            {password && entries.length > 0 && (
+            {dek && entries.length > 0 && (
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -307,7 +401,7 @@ export default function DiaryPage() {
               </motion.div>
             )}
 
-            {password && (
+            {dek && (
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -352,27 +446,23 @@ export default function DiaryPage() {
               </motion.div>
             )}
 
-            {/* Password Input - Small box at bottom */}
+            {/* PIN status indicator */}
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.2 }}
             >
               <Card className="bg-gradient-to-br from-white/5 to-white/5 border-white/10">
-                <div className="flex gap-2 items-center">
-                  <input
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && loadEntries(user.id)}
-                    placeholder="Enter password"
-                    className="flex-1 px-3 py-2 text-sm bg-white/5 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-star-gold/50 transition-all"
-                  />
-                  <Button size="sm" onClick={() => loadEntries(user.id)}>
-                    {password ? 'Reload' : 'Unlock'}
+                <div className="flex gap-2 items-center justify-between">
+                  <div className="flex items-center gap-2 text-sm text-gray-400">
+                    <LockIcon size={14} className="text-emerald-400" />
+                    <span>PIN-encrypted diary</span>
+                  </div>
+                  <Button size="sm" variant="ghost" onClick={() => loadEntries(user.id)}>
+                    Refresh
                   </Button>
                 </div>
-                {password && (
+                {dek && (
                   <p className="text-xs text-gray-500 mt-2">
                     Encrypted
                   </p>
@@ -420,7 +510,7 @@ export default function DiaryPage() {
                   exit={{ opacity: 0 }}
                 >
                   <Card className="bg-gradient-to-br from-white/10 to-white/5 border-white/20">
-                    {password ? (
+                    {dek ? (
                       <MoodCalendar
                         entries={entries}
                         currentMood={profile?.mood}
@@ -433,7 +523,7 @@ export default function DiaryPage() {
                         <div className="flex justify-center mb-4">
                           <LockIcon size={40} />
                         </div>
-                        <p className="text-lg">Enter password to view calendar</p>
+                        <p className="text-lg">Locked</p>
                       </div>
                     )}
                   </Card>
