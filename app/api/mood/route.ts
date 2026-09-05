@@ -1,19 +1,22 @@
 import { NextResponse } from 'next/server';
 import { analyzeMood } from '@/lib/ai/mood-analysis';
 import { createClient as createBrowserClient } from '@supabase/supabase-js';
-import { decrypt } from '@/lib/crypto/encryption';
+import { decryptData, decodeDEK } from '@/lib/crypto/envelope';
 import type { Database } from '@/types/database';
 
 export async function POST(request: Request) {
   try {
-    const { userId, password, limit = 5 } = await request.json();
+    const { userId, dekBase64, limit = 5 } = await request.json();
 
-    if (!userId || !password) {
+    if (!userId || !dekBase64) {
       return NextResponse.json(
         { error: 'Missing required fields' },
         { status: 400 }
       );
     }
+
+    // Decode the DEK from base64
+    const dek = decodeDEK(dekBase64);
 
     // Use service role key to bypass RLS (we're on the server, userId is verified from client)
     const supabase = createBrowserClient<Database>(
@@ -51,16 +54,24 @@ export async function POST(request: Request) {
       );
     }
 
-    // Decrypt entries
-    const decryptedEntries = await Promise.all(
-      entries.map(async (entry) => {
-        try {
-          return await decrypt(entry.encrypted_content, password);
-        } catch {
-          throw new Error('Failed to decrypt entries - wrong password?');
-        }
-      })
-    );
+    // Decrypt entries using DEK
+    const decryptedEntries = [];
+    for (const entry of entries) {
+      try {
+        const decrypted = await decryptData(entry.encrypted_content, dek);
+        decryptedEntries.push(decrypted);
+      } catch (error) {
+        console.error('Failed to decrypt one entry, skipping:', error);
+        // Skip entries that fail to decrypt (might be old or corrupted)
+      }
+    }
+
+    if (decryptedEntries.length === 0) {
+      return NextResponse.json(
+        { error: 'No readable entries found' },
+        { status: 404 }
+      );
+    }
 
     // Analyze mood
     const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY!;

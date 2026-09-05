@@ -174,7 +174,14 @@ export function MoodCalendar({ entries, currentMood, currentMoodColor, selectedD
     }
   }, [isTypingYear, dateInput, suggestion]);
 
-  const today = new Date().toISOString().split('T')[0];
+  // Get today's date in local timezone
+  const today = (() => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  })();
   const selectedDateStr = selectedDate?.toISOString().split('T')[0];
   const selectedEntry = selectedDate ? getEntryForDate(selectedDate) : null;
 
@@ -266,9 +273,13 @@ export function MoodCalendar({ entries, currentMood, currentMoodColor, selectedD
 
               const entry = getEntryForDate(date);
               const dateStr = date.toISOString().split('T')[0];
-              const isToday = dateStr === today;
+              // Compare dates in local timezone
+              const localDateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+              const isToday = localDateStr === today;
               const isSelected = dateStr === selectedDateStr;
               const hasEntry = !!entry;
+              // Use entry-specific mood color if available, otherwise fall back to current mood color
+              const entryMoodColor = entry?.moodColor || currentMoodColor;
 
               return (
                 <motion.button
@@ -287,11 +298,11 @@ export function MoodCalendar({ entries, currentMood, currentMoodColor, selectedD
                     }
                   `}
                   style={{
-                    backgroundColor: hasEntry && currentMoodColor
-                      ? `${currentMoodColor}40`
+                    backgroundColor: hasEntry && entryMoodColor
+                      ? `${entryMoodColor}40`
                       : undefined,
-                    borderColor: hasEntry && currentMoodColor
-                      ? `${currentMoodColor}80`
+                    borderColor: hasEntry && entryMoodColor
+                      ? `${entryMoodColor}80`
                       : undefined,
                     borderWidth: hasEntry ? '1px' : undefined,
                   }}
@@ -300,7 +311,7 @@ export function MoodCalendar({ entries, currentMood, currentMoodColor, selectedD
                   {hasEntry && (
                     <div
                       className="absolute bottom-1 left-1/2 transform -translate-x-1/2 w-1 h-1 rounded-full"
-                      style={{ backgroundColor: currentMoodColor || '#fff' }}
+                      style={{ backgroundColor: entryMoodColor || '#fff' }}
                     />
                   )}
                 </motion.button>

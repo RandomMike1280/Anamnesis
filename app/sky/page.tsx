@@ -91,15 +91,6 @@ export default function SkyPage() {
           entry_count: profile.entry_count || 0,
         };
       });
-          bio: profile.bio,
-          quote: profile.quote,
-          region: profile.region,
-          mood: profile.mood as any,
-          color: profile.mood_color || getMoodColor(profile.mood || 'happy'),
-          x: position.x,
-          y: position.y,
-        };
-      });
 
       setStars(starsData);
     } catch (error) {
@@ -132,6 +123,9 @@ export default function SkyPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Button variant="ghost" onClick={() => router.push('/timeline')}>
+            Timeline
+          </Button>
           <Button variant="ghost" onClick={() => router.push('/wall')}>
             Love Wall
           </Button>

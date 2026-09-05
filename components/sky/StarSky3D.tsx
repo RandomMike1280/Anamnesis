@@ -378,9 +378,9 @@ export function StarSky3D({ stars, onStarClick }: StarSky3DProps) {
         if (x < -50 || x > canvas.width + 50 || y < -50 || y > canvas.height + 50) return;
 
         // Star size scales with journal size
-        // 0 entries = size 2, 10 = 3.5, 50 = 5, 100+ = 7 (logarithmic)
+        // 0 entries = size 1, 10 = 2, 50 = 3, 100+ = 4 (logarithmic, reduced from previous values)
         const entryCount = (star as any).entry_count || 0;
-        const baseSize = 2 + Math.min(5, Math.log2(entryCount + 1) * 1.5);
+        const baseSize = 1 + Math.min(3, Math.log2(entryCount + 1) * 1);
         const hoverMultiplier = star.hoverSize || 1;
         const size = baseSize * hoverMultiplier;
         const finalSize = size * scale;
@@ -408,7 +408,7 @@ export function StarSky3D({ stars, onStarClick }: StarSky3DProps) {
 
           const whiteColor = whitenColor(star.color);
 
-          ctx.globalAlpha = scale * 0.6 * (hoverMultiplier - 1);
+          ctx.globalAlpha = scale * 0.8 * (hoverMultiplier - 1);
 
           // Draw first set of 4 diamond-shaped rays (original angle)
           for (let i = 0; i < 4; i++) {
@@ -425,17 +425,17 @@ export function StarSky3D({ stars, onStarClick }: StarSky3DProps) {
 
             ctx.fillStyle = rayGradient;
 
-            // Draw diamond-shaped ray
+            // Draw very thin diamond-shaped ray
             ctx.beginPath();
             ctx.moveTo(x, y); // Center
 
-            // Calculate perpendicular offset for width
+            // Calculate perpendicular offset for width - much thinner
             const perpAngle = angle + Math.PI / 2;
-            const width = sparkleLength * 0.15;
+            const width = sparkleLength * 0.03; // Reduced from 0.15 to 0.03 for very thin rays
 
             // One side of the ray
-            const midX = x + Math.cos(angle) * sparkleLength * 0.4;
-            const midY = y + Math.sin(angle) * sparkleLength * 0.4;
+            const midX = x + Math.cos(angle) * sparkleLength * 0.3; // Moved closer to center
+            const midY = y + Math.sin(angle) * sparkleLength * 0.3;
 
             ctx.lineTo(
               midX + Math.cos(perpAngle) * width,
@@ -466,17 +466,17 @@ export function StarSky3D({ stars, onStarClick }: StarSky3DProps) {
 
             ctx.fillStyle = rayGradient;
 
-            // Draw diamond-shaped ray
+            // Draw very thin diamond-shaped ray
             ctx.beginPath();
             ctx.moveTo(x, y); // Center
 
-            // Calculate perpendicular offset for width
+            // Calculate perpendicular offset for width - much thinner
             const perpAngle = angle + Math.PI / 2;
-            const width = sparkleLength2 * 0.15;
+            const width = sparkleLength2 * 0.03; // Reduced from 0.15 to 0.03 for very thin rays
 
             // One side of the ray
-            const midX = x + Math.cos(angle) * sparkleLength2 * 0.4;
-            const midY = y + Math.sin(angle) * sparkleLength2 * 0.4;
+            const midX = x + Math.cos(angle) * sparkleLength2 * 0.3; // Moved closer to center
+            const midY = y + Math.sin(angle) * sparkleLength2 * 0.3;
 
             ctx.lineTo(
               midX + Math.cos(perpAngle) * width,
@@ -491,27 +491,43 @@ export function StarSky3D({ stars, onStarClick }: StarSky3DProps) {
             ctx.closePath();
             ctx.fill();
           }
+
+          // Draw bright center glow instead of solid circle when hovered
+          const centerGlowSize = finalSize * 1.5;
+          const centerGradient = ctx.createRadialGradient(x, y, 0, x, y, centerGlowSize);
+          centerGradient.addColorStop(0, '#ffffff');
+          centerGradient.addColorStop(0.3, whiteColor + 'ff');
+          centerGradient.addColorStop(0.6, star.color + 'aa');
+          centerGradient.addColorStop(1, star.color + '00');
+
+          ctx.globalAlpha = scale * 0.9;
+          ctx.fillStyle = centerGradient;
+          ctx.beginPath();
+          ctx.arc(x, y, centerGlowSize, 0, Math.PI * 2);
+          ctx.fill();
         }
 
-        // Main glow effect
-        const glowSize = finalSize * 4;
-        const gradient = ctx.createRadialGradient(x, y, 0, x, y, glowSize);
-        gradient.addColorStop(0, star.color + 'ff');
-        gradient.addColorStop(0.5, star.color + '40');
-        gradient.addColorStop(1, star.color + '00');
+        // Main glow effect (only for non-hovered or weak hover)
+        if (!hoveredStar || hoveredStar.id !== star.id || hoverMultiplier <= 1.2) {
+          const glowSize = finalSize * 4;
+          const gradient = ctx.createRadialGradient(x, y, 0, x, y, glowSize);
+          gradient.addColorStop(0, star.color + 'ff');
+          gradient.addColorStop(0.5, star.color + '40');
+          gradient.addColorStop(1, star.color + '00');
 
-        ctx.globalAlpha = scale;
-        ctx.fillStyle = gradient;
-        ctx.beginPath();
-        ctx.arc(x, y, glowSize, 0, Math.PI * 2);
-        ctx.fill();
+          ctx.globalAlpha = scale;
+          ctx.fillStyle = gradient;
+          ctx.beginPath();
+          ctx.arc(x, y, glowSize, 0, Math.PI * 2);
+          ctx.fill();
 
-        // Core
-        ctx.globalAlpha = 1;
-        ctx.fillStyle = star.color;
-        ctx.beginPath();
-        ctx.arc(x, y, finalSize, 0, Math.PI * 2);
-        ctx.fill();
+          // Core dot (only when not hovered)
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = star.color;
+          ctx.beginPath();
+          ctx.arc(x, y, finalSize, 0, Math.PI * 2);
+          ctx.fill();
+        }
       });
 
       // Store for interaction

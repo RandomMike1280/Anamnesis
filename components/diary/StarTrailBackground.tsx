@@ -28,7 +28,7 @@ export function StarTrailBackground() {
     // Generate stars
     const centerX = -canvas.width * 0.3; // Off to the left
     const centerY = -canvas.height * 0.3; // Off to the top
-    const numStars = 80; // Reduced from 200
+    const numStars = 120; // Increased from 80
 
     starsRef.current = Array.from({ length: numStars }, () => {
       const angle = Math.random() * Math.PI * 2;

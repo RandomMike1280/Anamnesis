@@ -1,3 +1,11 @@
+export type MoodType =
+  | 'joyful' | 'content' | 'peaceful' | 'excited' | 'grateful'
+  | 'sad' | 'melancholic' | 'lonely' | 'heartbroken' | 'grieving'
+  | 'anxious' | 'stressed' | 'overwhelmed' | 'frustrated' | 'angry'
+  | 'hopeful' | 'optimistic' | 'determined' | 'inspired' | 'curious'
+  | 'numb' | 'confused' | 'restless' | 'tired' | 'apathetic'
+  | 'scared' | 'worried' | 'nervous' | 'vulnerable' | 'uncertain';
+
 export interface DiaryEntry {
   id: string;
   userId: string;
@@ -5,6 +13,9 @@ export interface DiaryEntry {
   createdAt: Date;
   updatedAt: Date;
   entryDate: Date;
+  mood?: MoodType | null;
+  moodColor?: string | null;
+  moodConfidence?: number | null;
 }
 
 export interface UserProfile {
@@ -13,7 +24,7 @@ export interface UserProfile {
   bio: string | null;
   quote: string | null;
   region: string | null;
-  mood: 'happy' | 'sad' | 'struggling' | 'hopeful' | null;
+  mood: MoodType | null;
   moodColor: string | null;
   moodConfidence: number | null;
   lastMoodUpdate: Date | null;
@@ -29,7 +40,7 @@ export interface Star {
   bio: string | null;
   quote: string | null;
   region: string | null;
-  mood: 'happy' | 'sad' | 'struggling' | 'hopeful';
+  mood: MoodType;
   color: string;
   x: number; // Position in sky (0-1)
   y: number; // Position in sky (0-1)

@@ -87,10 +87,22 @@ export const QUOTES = [
 ];
 
 /**
+ * Short quotes (< 50 chars) ideal for loading screens
+ */
+export const SHORT_QUOTES = QUOTES.filter(q => q.text.length < 50);
+
+/**
  * Get a random quote from the collection
  */
 export function getRandomQuote() {
   return QUOTES[Math.floor(Math.random() * QUOTES.length)];
+}
+
+/**
+ * Get a random short quote (< 50 chars) for loading screens
+ */
+export function getRandomShortQuote() {
+  return SHORT_QUOTES[Math.floor(Math.random() * SHORT_QUOTES.length)];
 }
 
 /**

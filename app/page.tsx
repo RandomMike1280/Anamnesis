@@ -41,7 +41,7 @@ export default function HomePage() {
             transition={{ duration: 1, ease: [0.22, 1, 0.36, 1] }}
             className="text-7xl md:text-8xl lg:text-9xl font-serif mb-8 tracking-tight"
           >
-            Space of Sonder
+            Anamnesis
           </motion.h1>
 
           <motion.p

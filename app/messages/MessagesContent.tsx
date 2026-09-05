@@ -3,7 +3,8 @@
 import { useEffect, useState, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase/client';
-import { encrypt, decrypt } from '@/lib/crypto/encryption';
+import { encryptData, decryptData, decryptDEK } from '@/lib/crypto/envelope';
+import { getConversationKey } from '@/lib/crypto/conversation';
 import { getRelativeTime } from '@/lib/utils';
 import type { Message } from '@/types';
 import { LoadingPage } from '@/components/ui/Loading';
@@ -14,9 +15,14 @@ export function MessagesContent() {
   const [user, setUser] = useState<any>(null);
   const [conversations, setConversations] = useState<any[]>([]);
   const [selectedConversation, setSelectedConversation] = useState<string | null>(null);
+  const [selectedProfile, setSelectedProfile] = useState<any>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
-  const [password, setPassword] = useState('');
+  const [dek, setDEK] = useState<Uint8Array | null>(null);
+  const [conversationKey, setConversationKey] = useState<Uint8Array | null>(null);
+  const [pinInput, setPinInput] = useState('');
+  const [pinError, setPinError] = useState('');
+  const [showPinPrompt, setShowPinPrompt] = useState(false);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -36,14 +42,92 @@ export function MessagesContent() {
       const toUser = searchParams.get('to');
       if (toUser) {
         setSelectedConversation(toUser);
+        // Find the profile for this user
+        const profile = conversations.find(c => c.id === toUser);
+        if (profile) setSelectedProfile(profile);
         loadMessages(toUser);
       }
     }
-  }, [user, searchParams]);
+  }, [user, searchParams, conversations]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Subscribe to real-time message updates
+  useEffect(() => {
+    if (!user || !selectedConversation) return;
+
+    console.log('Setting up real-time subscription for conversation:', selectedConversation);
+    console.log('User ID:', user.id);
+
+    const channel = supabase
+      .channel(`messages-${selectedConversation}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'messages',
+        },
+        (payload) => {
+          console.log('🔔 Real-time message INSERT received:', payload);
+          const msg = payload.new as any;
+          console.log('Message details - sender:', msg.sender_id, 'recipient:', msg.recipient_id);
+          console.log('Current user:', user.id, 'Current conversation:', selectedConversation);
+          // Check if this message is for the current conversation
+          if (
+            (msg.sender_id === user.id && msg.recipient_id === selectedConversation) ||
+            (msg.sender_id === selectedConversation && msg.recipient_id === user.id)
+          ) {
+            console.log('✅ Message is for current conversation, reloading...');
+            loadMessages(selectedConversation);
+          } else {
+            console.log('❌ Message is NOT for current conversation, ignoring');
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'messages',
+        },
+        (payload) => {
+          console.log('🔔 Real-time message UPDATE received:', payload);
+          const msg = payload.new as any;
+          // Check if this message is for the current conversation
+          if (
+            (msg.sender_id === user.id && msg.recipient_id === selectedConversation) ||
+            (msg.sender_id === selectedConversation && msg.recipient_id === user.id)
+          ) {
+            console.log('✅ Updated message is for current conversation, reloading...');
+            loadMessages(selectedConversation);
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'DELETE',
+          schema: 'public',
+          table: 'messages',
+        },
+        (payload) => {
+          console.log('🔔 Real-time message DELETE received:', payload);
+          loadMessages(selectedConversation);
+        }
+      )
+      .subscribe((status) => {
+        console.log('📡 Real-time subscription status:', status);
+      });
+
+    return () => {
+      console.log('🔌 Unsubscribing from real-time channel');
+      supabase.removeChannel(channel);
+    };
+  }, [user, selectedConversation]);
 
   async function checkUser() {
     const { data: { user: authUser } } = await supabase.auth.getUser();
@@ -76,21 +160,36 @@ export function MessagesContent() {
 
     const { data: profiles } = await (supabase as any)
       .from('profiles')
-      .select('id, username')
+      .select('id, username, display_name, avatar_url')
       .in('id', Array.from(conversationIds));
 
     setConversations(profiles || []);
   }
 
   async function loadMessages(recipientId: string) {
-    if (!user) return;
+    if (!user) {
+      console.log('Cannot load messages: user missing');
+      return;
+    }
 
-    const { data, error } = await (supabase as any)
+    // Get conversation key (derived from both user IDs, no DEK needed)
+    let convKey: Uint8Array;
+    try {
+      convKey = await getConversationKey(supabase, user.id, recipientId, new Uint8Array());
+      setConversationKey(convKey);
+    } catch (error) {
+      console.error('Error getting conversation key:', error);
+      return;
+    }
+
+    const { data, error } = await supabase
       .from('messages')
       .select('*')
       .or(`and(sender_id.eq.${user.id},recipient_id.eq.${recipientId}),and(sender_id.eq.${recipientId},recipient_id.eq.${user.id})`)
       .is('deleted_at', null)
       .order('created_at', { ascending: true });
+
+    console.log('Loaded messages from DB:', data?.length, 'messages');
 
     if (error) {
       console.error('Error loading messages:', error);
@@ -100,35 +199,21 @@ export function MessagesContent() {
     const decrypted = [];
     for (const msg of data || []) {
       try {
-        if (password) {
-          const content = await decrypt(msg.encrypted_content, password);
-          decrypted.push({
-            id: msg.id,
-            senderId: msg.sender_id,
-            recipientId: msg.recipient_id,
-            content,
-            createdAt: new Date(msg.created_at),
-            readAt: msg.read_at ? new Date(msg.read_at) : null,
-            mediaUrl: msg.media_url,
-            mediaType: msg.media_type,
-            editedAt: msg.edited_at ? new Date(msg.edited_at) : null,
-            deletedAt: msg.deleted_at ? new Date(msg.deleted_at) : null,
-          });
-        } else {
-          decrypted.push({
-            id: msg.id,
-            senderId: msg.sender_id,
-            recipientId: msg.recipient_id,
-            content: '[Encrypted - Enter password to view]',
-            createdAt: new Date(msg.created_at),
-            readAt: msg.read_at ? new Date(msg.read_at) : null,
-            mediaUrl: msg.media_url,
-            mediaType: msg.media_type,
-            editedAt: msg.edited_at ? new Date(msg.edited_at) : null,
-            deletedAt: msg.deleted_at ? new Date(msg.deleted_at) : null,
-          });
-        }
-      } catch {
+        const content = await decryptData(msg.encrypted_content, convKey);
+        decrypted.push({
+          id: msg.id,
+          senderId: msg.sender_id,
+          recipientId: msg.recipient_id,
+          content,
+          createdAt: new Date(msg.created_at),
+          readAt: msg.read_at ? new Date(msg.read_at) : null,
+          mediaUrl: msg.media_url,
+          mediaType: msg.media_type,
+          editedAt: msg.edited_at ? new Date(msg.edited_at) : null,
+          deletedAt: msg.deleted_at ? new Date(msg.deleted_at) : null,
+        });
+      } catch (err) {
+        console.error('Failed to decrypt message:', msg.id, err);
         decrypted.push({
           id: msg.id,
           senderId: msg.sender_id,
@@ -144,16 +229,31 @@ export function MessagesContent() {
       }
     }
 
+    console.log('Decrypted messages:', decrypted.length);
     setMessages(decrypted);
+
+    // Scroll to bottom after messages load
+    setTimeout(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'instant' });
+    }, 100);
   }
 
   async function sendMessage(mediaUrl?: string, mediaType?: string) {
-    if ((!newMessage.trim() && !mediaUrl) || !password || !selectedConversation || !user) return;
+    if ((!newMessage.trim() && !mediaUrl) || !selectedConversation || !user) return;
 
     setSending(true);
     try {
-      const encrypted = await encrypt(newMessage || '[Media]', password);
-      const { error } = await (supabase as any)
+      // Get conversation key if we don't have it yet
+      let convKey = conversationKey;
+      if (!convKey) {
+        convKey = await getConversationKey(supabase, user.id, selectedConversation, new Uint8Array());
+        setConversationKey(convKey);
+      }
+
+      // Only encrypt the actual message text, use empty string for media-only messages
+      const contentToEncrypt = mediaUrl && !newMessage.trim() ? '' : newMessage;
+      const encrypted = await encryptData(contentToEncrypt, convKey);
+      const { error } = await supabase
         .from('messages')
         .insert({
           sender_id: user.id,
@@ -212,14 +312,20 @@ export function MessagesContent() {
     if (!confirm('Delete this message? This cannot be undone.')) return;
 
     try {
-      const { error } = await (supabase as any)
+      const { error } = await supabase
         .from('messages')
         .update({ deleted_at: new Date().toISOString() })
         .eq('id', msgId);
 
-      if (error) throw error;
+      if (error) {
+        console.error('Delete error:', error);
+        throw error;
+      }
 
-      if (selectedConversation) loadMessages(selectedConversation);
+      console.log('Message deleted, reloading...');
+      if (selectedConversation) {
+        await loadMessages(selectedConversation);
+      }
     } catch (error) {
       console.error('Error deleting message:', error);
       alert('Failed to delete message');
@@ -227,11 +333,11 @@ export function MessagesContent() {
   }
 
   async function saveEdit(msgId: string) {
-    if (!editText.trim() || !password) return;
+    if (!editText.trim() || !conversationKey) return;
 
     try {
-      const encrypted = await encrypt(editText, password);
-      const { error } = await (supabase as any)
+      const encrypted = await encryptData(editText, conversationKey);
+      const { error } = await supabase
         .from('messages')
         .update({
           encrypted_content: encrypted,
@@ -239,20 +345,55 @@ export function MessagesContent() {
         })
         .eq('id', msgId);
 
-      if (error) throw error;
+      if (error) {
+        console.error('Edit error:', error);
+        throw error;
+      }
 
+      console.log('Message edited, reloading...');
       setEditingId(null);
       setEditText('');
-      if (selectedConversation) loadMessages(selectedConversation);
+      if (selectedConversation) {
+        await loadMessages(selectedConversation);
+      }
     } catch (error) {
       console.error('Error editing message:', error);
       alert('Failed to edit message');
     }
   }
 
-  if (loading) return <LoadingPage />;
+  async function handlePinUnlock() {
+    if (!pinInput || !user) return;
+    setPinError('');
 
-  const selectedProfile = conversations.find((c) => c.id === selectedConversation);
+    try {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('encrypted_dek')
+        .eq('id', user.id)
+        .single();
+
+      if (!profile?.encrypted_dek) {
+        setPinError('No encryption key found');
+        return;
+      }
+
+      const decryptedDEK = await decryptDEK(profile.encrypted_dek, pinInput);
+      setDEK(decryptedDEK);
+      setShowPinPrompt(false);
+      setPinInput('');
+
+      // Load messages for selected conversation if any
+      if (selectedConversation) {
+        loadMessages(selectedConversation);
+      }
+    } catch (err) {
+      console.error('PIN unlock error:', err);
+      setPinError('Incorrect PIN');
+    }
+  }
+
+  if (loading) return <LoadingPage />;
 
   return (
     <div className="h-screen bg-[#0a0d12] text-white flex flex-col overflow-hidden">
@@ -272,45 +413,6 @@ export function MessagesContent() {
         <div className="w-24" />
       </div>
 
-      {/* Password unlock modal overlay */}
-      {!password && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          className="absolute inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
-        >
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.1 }}
-            className="max-w-md w-full p-8 rounded-3xl bg-gradient-to-br from-white/15 to-white/5 border border-white/20 text-center space-y-6"
-          >
-            <div className="flex justify-center">
-              <div className="p-5 rounded-3xl bg-amber-500/10 border border-amber-500/20">
-                <LockIcon size={40} className="text-amber-400" />
-              </div>
-            </div>
-            <div>
-              <p className="text-lg font-medium text-white mb-2">Messages are encrypted</p>
-              <p className="text-sm text-gray-400 mb-4">Enter your password to decrypt</p>
-              <input
-                type="password"
-                placeholder="Password"
-                value={password}
-                autoFocus
-                onChange={(e) => setPassword(e.target.value)}
-                onKeyPress={(e) => {
-                  if (e.key === 'Enter' && password && selectedConversation) {
-                    loadMessages(selectedConversation);
-                  }
-                }}
-                className="w-full px-5 py-3 bg-black/60 border border-white/20 rounded-2xl text-white placeholder-gray-500 focus:outline-none focus:border-amber-400/50 focus:ring-2 focus:ring-amber-400/20 transition-all"
-              />
-            </div>
-          </motion.div>
-        </motion.div>
-      )}
-
       {/* Main content - takes remaining height */}
       <div className="flex-1 flex overflow-hidden">
         {/* Sidebar - fixed width, scrollable */}
@@ -328,7 +430,9 @@ export function MessagesContent() {
                   key={conv.id}
                   onClick={() => {
                     setSelectedConversation(conv.id);
-                    if (password) loadMessages(conv.id);
+                    setSelectedProfile(conv);
+                    router.push(`/messages?to=${conv.id}`);
+                    loadMessages(conv.id);
                   }}
                   className={`
                     w-full p-3.5 rounded-xl text-left transition-all flex items-center gap-3
@@ -338,13 +442,21 @@ export function MessagesContent() {
                     }
                   `}
                 >
-                  <div className="w-10 h-10 flex-shrink-0 rounded-full bg-gradient-to-br from-violet-500/30 to-purple-500/20 border border-violet-500/30 flex items-center justify-center">
-                    <span className="text-sm font-bold text-violet-300">
-                      {conv.username?.[0]?.toUpperCase() || '?'}
-                    </span>
-                  </div>
+                  {conv.avatar_url ? (
+                    <img
+                      src={conv.avatar_url}
+                      alt={conv.display_name || conv.username}
+                      className="w-10 h-10 flex-shrink-0 rounded-full object-cover border border-violet-500/30"
+                    />
+                  ) : (
+                    <div className="w-10 h-10 flex-shrink-0 rounded-full bg-gradient-to-br from-violet-500/30 to-purple-500/20 border border-violet-500/30 flex items-center justify-center">
+                      <span className="text-sm font-bold text-violet-300">
+                        {(conv.display_name || conv.username)?.[0]?.toUpperCase() || '?'}
+                      </span>
+                    </div>
+                  )}
                   <div className="flex-1 min-w-0">
-                    <p className="font-medium truncate">{conv.username}</p>
+                    <p className="font-medium truncate">{conv.display_name || conv.username || 'Unknown'}</p>
                     <p className="text-xs text-gray-500 truncate">Tap to view</p>
                   </div>
                 </button>
@@ -360,18 +472,26 @@ export function MessagesContent() {
 
         {/* Chat area - takes remaining width, scrollable messages */}
         <div className="flex-1 flex flex-col overflow-hidden">
-          {selectedConversation && password ? (
+          {selectedConversation ? (
             <>
               {/* Chat header */}
               <div className="flex-shrink-0 px-6 py-4 border-b border-white/10 bg-[#0f131c]/50">
                 <div className="flex items-center gap-3">
-                  <div className="w-11 h-11 rounded-full bg-gradient-to-br from-violet-500/20 to-purple-500/20 border border-violet-500/30 flex items-center justify-center">
-                    <span className="text-base font-bold text-violet-300">
-                      {selectedProfile?.username?.[0]?.toUpperCase() || '?'}
-                    </span>
-                  </div>
+                  {selectedProfile?.avatar_url ? (
+                    <img
+                      src={selectedProfile.avatar_url}
+                      alt={selectedProfile.display_name || selectedProfile.username}
+                      className="w-11 h-11 rounded-full object-cover border border-violet-500/30"
+                    />
+                  ) : (
+                    <div className="w-11 h-11 rounded-full bg-gradient-to-br from-violet-500/20 to-purple-500/20 border border-violet-500/30 flex items-center justify-center">
+                      <span className="text-base font-bold text-violet-300">
+                        {(selectedProfile?.display_name || selectedProfile?.username)?.[0]?.toUpperCase() || '?'}
+                      </span>
+                    </div>
+                  )}
                   <div>
-                    <p className="font-semibold text-white">{selectedProfile?.username}</p>
+                    <p className="font-semibold text-white">{selectedProfile?.display_name || selectedProfile?.username || 'Unknown'}</p>
                     <p className="text-xs text-gray-500">End-to-end encrypted</p>
                   </div>
                 </div>

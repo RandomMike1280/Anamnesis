@@ -153,8 +153,8 @@ export default function ProfilePage() {
     setUploading(type);
     try {
       const fileExt = file.name.split('.').pop();
-      const fileName = `${profileId}-${type}-${Date.now()}.${fileExt}`;
-      const filePath = `${type}s/${fileName}`;
+      const fileName = `${type}-${Date.now()}.${fileExt}`;
+      const filePath = `${profileId}/${fileName}`;
       const { error: uploadError } = await supabase.storage.from('profile-media').upload(filePath, file);
       if (uploadError) throw uploadError;
       const { data } = supabase.storage.from('profile-media').getPublicUrl(filePath);

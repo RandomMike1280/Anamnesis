@@ -64,6 +64,7 @@ const DIARY_PLACEHOLDERS = [
   "What magic did you witness today?",
   "What tenderness are you feeling?",
   "What wildness is calling your name?",
+  "Are you alright?",
 ];
 
 function getSmartRandomPlaceholder(): string {

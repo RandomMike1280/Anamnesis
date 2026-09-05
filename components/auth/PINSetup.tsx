@@ -54,7 +54,10 @@ export function PINSetup({ userId, onComplete }: PINSetupProps) {
         .update({ encrypted_dek: encryptedDEKString })
         .eq('id', userId);
 
-      if (updateError) throw updateError;
+      if (updateError) {
+        console.error('Supabase update error:', updateError);
+        throw updateError;
+      }
 
       // Pass DEK to parent (kept in memory for this session)
       onComplete(pin, dek);
