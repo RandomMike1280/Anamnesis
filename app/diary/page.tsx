@@ -23,6 +23,91 @@ import { useGameData } from '@/lib/hooks/useGameData';
 import { CalendarIcon, TreeIcon, ClipboardIcon, MicIcon, HourglassIcon, CoinIcon, LockIcon } from '@/components/ui/icons';
 import { DailyQuote } from '@/components/ui/DailyQuote';
 
+const DIARY_PLACEHOLDERS = [
+  "What's weighing on your soul today?",
+  "What thoughts are wandering through your mind?",
+  "How does your heart feel in this moment?",
+  "What story does today want to tell?",
+  "What emotions are you carrying right now?",
+  "What truth are you holding inside?",
+  "What light or shadow touched you today?",
+  "What's stirring in the depths of your being?",
+  "What would you tell your future self?",
+  "What are you grateful for, or grieving over?",
+  "What memories are surfacing right now?",
+  "What dreams are calling to you?",
+  "What burden would you like to release?",
+  "What joy did you discover today?",
+  "What silence needs to be broken?",
+  "What words have been left unspoken?",
+  "What transformation are you experiencing?",
+  "What hope are you holding onto?",
+  "What fears are you facing?",
+  "What love are you nurturing?",
+  "What pain deserves acknowledgment?",
+  "What beauty caught your attention?",
+  "What lesson is life teaching you?",
+  "What connection are you seeking?",
+  "What freedom are you longing for?",
+  "What courage did you summon today?",
+  "What authenticity wants to emerge?",
+  "What vulnerability are you embracing?",
+  "What strength did you rediscover?",
+  "What gentleness do you need right now?",
+  "What forgiveness is waiting to be given?",
+  "What acceptance are you learning?",
+  "What change is unfolding within you?",
+  "What peace are you cultivating?",
+  "What wonder filled your day?",
+  "What question is your heart asking?",
+  "What answer is revealing itself?",
+  "What magic did you witness today?",
+  "What tenderness are you feeling?",
+  "What wildness is calling your name?",
+];
+
+function getSmartRandomPlaceholder(): string {
+  const RECENT_KEY = 'diaryPlaceholderHistory';
+  const MAX_HISTORY = 8; // Won't repeat until 8 different ones have been shown
+
+  // Get recent history from localStorage
+  let recentIndices: number[] = [];
+  try {
+    const stored = localStorage.getItem(RECENT_KEY);
+    if (stored) {
+      recentIndices = JSON.parse(stored);
+    }
+  } catch {
+    // If parsing fails, start fresh
+    recentIndices = [];
+  }
+
+  // Filter out recently used indices
+  const availableIndices = DIARY_PLACEHOLDERS.map((_, i) => i)
+    .filter(i => !recentIndices.includes(i));
+
+  // If all have been used, reset and use full list
+  const poolIndices = availableIndices.length > 0 ? availableIndices : DIARY_PLACEHOLDERS.map((_, i) => i);
+
+  // Pick random from available pool
+  const selectedIndex = poolIndices[Math.floor(Math.random() * poolIndices.length)];
+
+  // Update history
+  recentIndices.push(selectedIndex);
+  if (recentIndices.length > MAX_HISTORY) {
+    recentIndices.shift(); // Remove oldest
+  }
+
+  // Save updated history
+  try {
+    localStorage.setItem(RECENT_KEY, JSON.stringify(recentIndices));
+  } catch {
+    // Silently fail if localStorage is unavailable
+  }
+
+  return DIARY_PLACEHOLDERS[selectedIndex];
+}
+
 export default function DiaryPage() {
   const [user, setUser] = useState<any>(null);
   const [profile, setProfile] = useState<any>(null);
@@ -36,14 +121,87 @@ export default function DiaryPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
-  const [selectedDate, setSelectedDate] = useState<Date | null>(new Date()); // Default to today
+  const [selectedDate, setSelectedDate] = useState<Date | null>(null); // Will be set after loading
   const [rightTab, setRightTab] = useState<'calendar' | 'tree' | 'tasks' | 'interview' | 'capsules'>('calendar');
+  const [isLocked, setIsLocked] = useState(false);
+  const [lockTimer, setLockTimer] = useState<number>(300); // 5 minutes in seconds
+  const [lockTimeoutId, setLockTimeoutId] = useState<NodeJS.Timeout | null>(null);
+  const [placeholder] = useState(() => getSmartRandomPlaceholder());
   const router = useRouter();
   const { data: gameData, dailyTasks, waterTree, completeTask, onDiarySaved } = useGameData();
 
   useEffect(() => {
     checkUser();
+    // Initialize selectedDate to today in local timezone
+    const now = new Date();
+    const localDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    setSelectedDate(localDate);
+
+    // Restore draft from localStorage
+    const savedDraft = localStorage.getItem('diaryDraft');
+    if (savedDraft) {
+      setNewEntry(savedDraft);
+    }
   }, []);
+
+  // Auto-lock timer
+  useEffect(() => {
+    if (dek && !isLocked && !showPINPrompt) {
+      // Start countdown timer
+      const intervalId = setInterval(() => {
+        setLockTimer((prev) => {
+          if (prev <= 1) {
+            // Timer expired, lock the diary
+            setIsLocked(true);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+
+      // Clear interval on cleanup
+      return () => clearInterval(intervalId);
+    }
+  }, [dek, isLocked, showPINPrompt]);
+
+  // Reset timer when user interacts
+  const resetLockTimer = () => {
+    if (!isLocked) {
+      setLockTimer(300); // Reset to 5 minutes
+    }
+  };
+
+  // Manual lock function
+  const lockDiary = () => {
+    setIsLocked(true);
+    setLockTimer(0);
+    // Clear session storage to ensure lock state persists across pages
+    sessionStorage.removeItem('diaryUnlockTime');
+    sessionStorage.removeItem('diaryDEK');
+  };
+
+  // Unlock with PIN verification
+  const unlockDiary = async (pin: string) => {
+    try {
+      const decryptedDEK = await decryptDEK(profile.encrypted_dek, pin);
+      setDEK(decryptedDEK);
+      setIsLocked(false);
+      setLockTimer(300); // Reset to 5 minutes
+      setPinError('');
+
+      // Store unlock timestamp and DEK in sessionStorage (base64 encoded)
+      sessionStorage.setItem('diaryUnlockTime', Date.now().toString());
+      sessionStorage.setItem('diaryDEK', encodeDEK(decryptedDEK));
+
+      // Load entries after successful unlock
+      await loadEntries(user.id, decryptedDEK);
+
+      return true;
+    } catch {
+      setPinError('Incorrect PIN');
+      return false;
+    }
+  };
 
   // Check for auto mood analysis (once per day)
   useEffect(() => {
@@ -74,8 +232,39 @@ export default function DiaryPage() {
       setNeedsPINSetup(true);
       setLoading(false);
     } else {
-      setShowPINPrompt(true);
-      setLoading(false);
+      // Check if there's a valid session in sessionStorage
+      const unlockTimeStr = sessionStorage.getItem('diaryUnlockTime');
+      const storedDEK = sessionStorage.getItem('diaryDEK');
+
+      if (unlockTimeStr && storedDEK) {
+        const unlockTime = parseInt(unlockTimeStr, 10);
+        const now = Date.now();
+        const elapsedSeconds = Math.floor((now - unlockTime) / 1000);
+
+        if (elapsedSeconds < 300) {
+          // Still within 5 minutes, restore the session
+          const remainingTime = 300 - elapsedSeconds;
+          setLockTimer(remainingTime);
+
+          // Decode and restore DEK
+          const dekBytes = Uint8Array.from(atob(storedDEK), c => c.charCodeAt(0));
+          setDEK(dekBytes);
+          setIsLocked(false);
+
+          // Load entries
+          await loadEntries(user.id, dekBytes);
+        } else {
+          // Session expired, clear and show locked
+          sessionStorage.removeItem('diaryUnlockTime');
+          sessionStorage.removeItem('diaryDEK');
+          setIsLocked(true);
+          setLoading(false);
+        }
+      } else {
+        // No session, show locked
+        setIsLocked(true);
+        setLoading(false);
+      }
     }
   };
 
@@ -107,6 +296,9 @@ export default function DiaryPage() {
               createdAt: new Date(entry.created_at),
               updatedAt: new Date(entry.updated_at),
               entryDate: new Date(entry.entry_date),
+              mood: entry.mood,
+              moodColor: entry.mood_color,
+              moodConfidence: entry.mood_confidence,
             };
           } catch {
             return {
@@ -116,6 +308,9 @@ export default function DiaryPage() {
               createdAt: new Date(entry.created_at),
               updatedAt: new Date(entry.updated_at),
               entryDate: new Date(entry.entry_date),
+              mood: entry.mood,
+              moodColor: entry.mood_color,
+              moodConfidence: entry.mood_confidence,
             };
           }
         })
@@ -148,8 +343,9 @@ export default function DiaryPage() {
   };
 
   const saveEntry = async () => {
-    if (!newEntry.trim() || !dek || !user || !selectedDate) return;
+    if (!newEntry.trim() || !dek || !user || !selectedDate || isLocked) return;
 
+    resetLockTimer();
     setSaving(true);
     try {
       // Encrypt content client-side
@@ -175,8 +371,30 @@ export default function DiaryPage() {
 
       console.log('Entry saved successfully:', data);
 
+      // Analyze mood for the new entry
+      if (data && data[0]) {
+        try {
+          await fetch('/api/mood/analyze-entry', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              entryId: data[0].id,
+              userId: user.id,
+              dekBase64: encodeDEK(dek),
+            }),
+          });
+        } catch (error) {
+          console.error('Error analyzing entry mood:', error);
+          // Don't fail the save if mood analysis fails
+        }
+      }
+
       onDiarySaved(newEntry);
       setNewEntry('');
+      // Clear draft from localStorage after successful save
+      localStorage.removeItem('diaryDraft');
       await loadEntries(user.id);
     } catch (error: any) {
       console.error('Error saving entry:', error);
@@ -363,6 +581,9 @@ export default function DiaryPage() {
             )}
           </div>
           <div className="flex items-center gap-2">
+            <Button variant="ghost" onClick={() => router.push('/timeline')}>
+              Timeline
+            </Button>
             <Button variant="ghost" onClick={() => router.push('/wall')}>
               Love Wall
             </Button>
@@ -391,7 +612,7 @@ export default function DiaryPage() {
           {/* Left side - Entry Input */}
           <div className="space-y-6">
             {/* Streak Counter */}
-            {dek && entries.length > 0 && (
+            {dek && entries.length > 0 && !isLocked && (
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -401,50 +622,104 @@ export default function DiaryPage() {
               </motion.div>
             )}
 
-            {dek && (
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.1 }}
-              >
-                <Card className="bg-gradient-to-br from-white/10 to-white/5 border-white/20">
-                  <Textarea
-                    value={newEntry}
-                    onChange={(e) => setNewEntry(e.target.value)}
-                    placeholder="What's weighing on your soul today?"
-                    rows={12}
-                    className="mb-4 bg-white/5 text-lg leading-relaxed"
-                  />
-                  <div className="flex justify-between items-center">
-                    <Button
-                      variant="ghost"
-                      onClick={() => runMoodAnalysis(false)}
-                      disabled={analyzing || entries.length === 0}
-                      className="text-sm"
-                    >
-                      {analyzing ? (
-                        <>
-                          <span className="inline-block w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin mr-2" />
-                          Analyzing...
-                        </>
-                      ) : (
-                        'Update Mood'
-                      )}
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      onClick={saveEntry}
-                      disabled={saving || !newEntry.trim()}
-                    >
-                      {saving ? 'Saving...' : 'Save Entry'}
-                    </Button>
-                  </div>
-                  <p className="text-xs text-gray-600 mt-3">
-                    Mood updates automatically every 24 hours
-                  </p>
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.1 }}
+            >
+              <Card className="bg-gradient-to-br from-white/10 to-white/5 border-white/20">
+                  {isLocked ? (
+                    <div className="text-center py-12">
+                      <div className="flex justify-center mb-4">
+                        <div className="w-16 h-16 rounded-full bg-violet-500/20 flex items-center justify-center">
+                          <LockIcon size={32} className="text-violet-400" />
+                        </div>
+                      </div>
+                      <p className="text-lg text-gray-400 mb-4">Diary is locked</p>
+                      <p className="text-sm text-gray-500 mb-6">Entry viewing and logging are disabled</p>
+                      <form
+                        onSubmit={async (e) => {
+                          e.preventDefault();
+                          await unlockDiary(pinInput);
+                          if (!pinError) {
+                            setPinInput('');
+                          }
+                        }}
+                        className="max-w-xs mx-auto space-y-4"
+                      >
+                        <input
+                          type="password"
+                          inputMode="numeric"
+                          value={pinInput}
+                          onChange={(e) => setPinInput(e.target.value.replace(/\D/g, ''))}
+                          placeholder="Enter PIN"
+                          maxLength={12}
+                          autoFocus
+                          className="w-full text-center text-xl tracking-widest px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-violet-500/50"
+                        />
+                        {pinError && (
+                          <p className="text-sm text-red-400 text-center">{pinError}</p>
+                        )}
+                        <Button
+                          type="submit"
+                          variant="secondary"
+                          className="w-full"
+                          disabled={!pinInput}
+                        >
+                          Unlock (5 min)
+                        </Button>
+                      </form>
+                    </div>
+                  ) : (
+                    <>
+                      <Textarea
+                        value={newEntry}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setNewEntry(value);
+                          resetLockTimer();
+                          // Auto-save draft to localStorage
+                          if (value.trim()) {
+                            localStorage.setItem('diaryDraft', value);
+                          } else {
+                            localStorage.removeItem('diaryDraft');
+                          }
+                        }}
+                        placeholder={placeholder}
+                        rows={12}
+                        className="mb-4 bg-white/5 text-lg leading-relaxed"
+                      />
+                      <div className="flex justify-between items-center">
+                        <Button
+                          variant="ghost"
+                          onClick={() => runMoodAnalysis(false)}
+                          disabled={analyzing || entries.length === 0}
+                          className="text-sm"
+                        >
+                          {analyzing ? (
+                            <>
+                              <span className="inline-block w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin mr-2" />
+                              Analyzing...
+                            </>
+                          ) : (
+                            'Update Mood'
+                          )}
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          onClick={saveEntry}
+                          disabled={saving || !newEntry.trim()}
+                        >
+                          {saving ? 'Saving...' : 'Save Entry'}
+                        </Button>
+                      </div>
+                      <p className="text-xs text-gray-600 mt-3">
+                        Mood updates automatically every 24 hours
+                      </p>
+                    </>
+                  )}
                 </Card>
               </motion.div>
-            )}
 
             {/* PIN status indicator */}
             <motion.div
@@ -455,16 +730,28 @@ export default function DiaryPage() {
               <Card className="bg-gradient-to-br from-white/5 to-white/5 border-white/10">
                 <div className="flex gap-2 items-center justify-between">
                   <div className="flex items-center gap-2 text-sm text-gray-400">
-                    <LockIcon size={14} className="text-emerald-400" />
+                    <LockIcon size={14} className={isLocked ? "text-red-400" : "text-emerald-400"} />
                     <span>PIN-encrypted diary</span>
                   </div>
-                  <Button size="sm" variant="ghost" onClick={() => loadEntries(user.id)}>
-                    Refresh
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    {!isLocked && dek && (
+                      <>
+                        <span className="text-xs text-gray-500">
+                          {Math.floor(lockTimer / 60)}:{String(lockTimer % 60).padStart(2, '0')}
+                        </span>
+                        <Button size="sm" variant="ghost" onClick={lockDiary}>
+                          Lock
+                        </Button>
+                      </>
+                    )}
+                    <Button size="sm" variant="ghost" onClick={() => loadEntries(user.id)}>
+                      Refresh
+                    </Button>
+                  </div>
                 </div>
                 {dek && (
                   <p className="text-xs text-gray-500 mt-2">
-                    Encrypted
+                    {isLocked ? 'Locked - Entry viewing and logging disabled' : 'Unlocked - Auto-locks after 5 minutes'}
                   </p>
                 )}
               </Card>
@@ -510,13 +797,16 @@ export default function DiaryPage() {
                   exit={{ opacity: 0 }}
                 >
                   <Card className="bg-gradient-to-br from-white/10 to-white/5 border-white/20">
-                    {dek ? (
+                    {dek && !isLocked ? (
                       <MoodCalendar
                         entries={entries}
                         currentMood={profile?.mood}
                         currentMoodColor={profile?.mood_color}
                         selectedDate={selectedDate}
-                        onDateSelect={setSelectedDate}
+                        onDateSelect={(date) => {
+                          setSelectedDate(date);
+                          resetLockTimer();
+                        }}
                       />
                     ) : (
                       <div className="text-center py-12 text-gray-500">
@@ -524,6 +814,7 @@ export default function DiaryPage() {
                           <LockIcon size={40} />
                         </div>
                         <p className="text-lg">Locked</p>
+                        <p className="text-sm text-gray-600 mt-2">Entry viewing disabled</p>
                       </div>
                     )}
                   </Card>
